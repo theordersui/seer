@@ -1,0 +1,47 @@
+/* src/styles/NetworkGraph.css */
+
+/* Graph container */
+.network-graph-container {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  z-index: 2; /* Above blur layer */
+}
+
+/* Loading message */
+.loading-message {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: 'OptimusPrinceps', sans-serif;
+  font-weight: 600;
+  font-size: 1.2rem;
+  color: #00E5FF; /* Match cyan glow */
+  background: rgba(0, 0, 0, 0.6); /* Match input/button background */
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 5px rgba(0, 229, 255, 0.2),
+    0 0 10px rgba(0, 229, 255, 0.4); /* Match input glow */
+  z-index: 3; /* Above graph */
+}
+
+/* Error message */
+.error-message {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: 'OptimusPrinceps', sans-serif;
+  font-weight: 600;
+  font-size: 1.2rem;
+  color: #FF4D4D; /* Match error color */
+  background: rgba(0, 0, 0, 0.6); /* Match input/button background */
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 5px rgba(255, 77, 77, 0.2),
+    0 0 10px rgba(255, 77, 77, 0.4); /* Red glow for error */
+  z-index: 3; /* Above graph */
+}

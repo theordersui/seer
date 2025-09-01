@@ -1,0 +1,13 @@
+@font-face {
+  font-family: 'OptimusPrinceps';
+  src: url('./fonts/OptimusPrinceps.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+body {
+  margin: 0;
+  font-family: 'OptimusPrinceps', sans-serif;  /* <- this makes MUI inherit your font */
+  background: linear-gradient(135deg, #121212, #333333);
+  color: #ffffff;
+}

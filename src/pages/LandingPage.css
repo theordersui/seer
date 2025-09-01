@@ -1,0 +1,265 @@
+/* src/components/LandingPage.css */
+:root {
+  --primary: #c02b2b;
+  --bg: #121212;
+  --bg-alt: #1f1f1f;
+  --text: #fff;
+  --card: rgba(255,255,255,0.08);
+  --radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+body, html {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'OptimusPrinceps', serif;
+  text-transform: lowercase; /* all text lowercase */
+}
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+/* HEADER */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-alt);
+  padding: 0 1rem;
+  height: 70px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header__logo {
+  height: 1px;
+}
+.header__btn {
+  background: var(--primary);
+  border: none;
+  padding: 0.5rem 1.25rem;
+  border-radius: var(--radius);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* HERO */
+.hero {
+  background: var(--bg-alt);
+  background-image: radial-gradient(circle at center, rgba(189, 28, 23, 0.15), transparent 80%);
+  text-align: center;
+  padding: 4rem 1rem;
+}
+.hero__logo img {
+  width: 150px;
+  margin-bottom: 0.5rem;
+  margin-right: 0.5rem;
+}
+.hero h1 {
+  font-size: 4rem;
+  margin: 0.25rem 0;
+  font-weight: 700;
+}
+.hero p {
+  font-size: 1.25rem;
+  margin: 0.5rem 0 1.5rem;
+  opacity: 0.85;
+}
+.hero__cta button {
+  background: var(--primary);
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* SECTION TITLES */
+.section-title {
+  text-align: center;
+  font-size: 2rem;
+  margin: 2.5rem 0 1.5rem;
+  font-weight: 600;
+}
+
+/* FEATURES */
+.features__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  padding-bottom: 2rem;
+}
+.feature-card {
+  position: relative;
+  background: var(--card);
+  padding: 1.5rem;
+  border-radius: var(--radius);
+  text-align: center;
+  transition: transform 0.3s, background 0.3s;
+}
+.feature-card:hover {
+  transform: translateY(-5px);
+  background: var(--bg-alt);
+}
+.feature-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: var(--primary);
+  color: var(--text);
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.feature-card__icon {
+  font-size: 2rem;
+  color: var(--primary);
+  margin-bottom: 0.5rem;
+}
+.feature-card__title {
+  font-size: 1.3rem; /* increased */
+  margin: 0.5rem 0;
+}
+.feature-card__desc {
+  font-size: 1rem; /* increased */
+  opacity: 0.8;
+}
+
+/* ABOUT (“Who Are We?”) */
+.about__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  padding-bottom: 2rem;
+}
+.section-box {
+  background: var(--card);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  overflow: hidden;
+  transition: transform 0.3s;
+}
+.section-box:hover {
+  transform: translateY(-5px);
+}
+.section-media {
+  width: 100%;
+  height: 360px; /* taller to show more video */
+  overflow: hidden;
+}
+.section-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.section-content {
+  padding: 1.5rem;
+  flex: 1;
+}
+.section-content h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+}
+.section-content p {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+.section-actions {
+  padding: 0 1.5rem 1.5rem;
+  text-align: center;
+}
+.btn {
+  display: inline-block;
+  background: var(--primary);
+  color: var(--text);
+  padding: 0.6rem 1.2rem;
+  border-radius: var(--radius);
+  text-decoration: none;
+  font-weight: 600;
+  transition: background 0.3s;
+}
+.btn:hover {
+  background: #3c36b3;
+}
+
+/* CHALLENGES */
+.challenges__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  padding-bottom: 2rem;
+}
+.challenge-item {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  text-align: center;
+  transition: transform 0.3s, background 0.3s;
+}
+.challenge-item:hover {
+  transform: translateY(-5px);
+  background: var(--bg-alt);
+}
+/* updated to match feature icon size */
+.challenge-icon {
+  font-size: 2rem;
+  color: var(--primary);
+  margin-bottom: 0.5rem;
+}
+/* added titles for challenge cards */
+.challenge-title {
+  font-size: 1.3rem;
+  margin: 0.5rem 0 0.25rem;
+}
+.challenge-desc {
+  font-size: 1rem; /* increased */
+  opacity: 0.8;
+  margin: 0;
+}
+
+/* INFO PANELS */
+.info-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  padding: 2rem 0;
+}
+.info-box {
+  background: var(--bg-alt);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+.info-box h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.3rem; /* increased */
+}
+.info-box ul {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.info-box li {
+  margin-bottom: 0.5rem;
+  font-size: 1rem; /* increased */
+}
+
+/* FOOTER */
+.footer {
+  text-align: center;
+  padding: 1rem 0;
+  font-size: 0.875rem;
+  opacity: 0.6;
+}

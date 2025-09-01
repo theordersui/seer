@@ -1,0 +1,177 @@
+:root {
+  --primary: #c02b2b;
+  --bg: #121212;
+  --bg-alt: #1f1f1f;
+  --text: #fff;
+  --card: rgba(255, 255, 255, 0.08);
+  --radius: 8px;
+
+  /* control pane width in ONE place */
+  --pane-width: 400px;
+}
+
+/* prevent horizontal scrollbars when pane slides */
+html, body { overflow-x: hidden; height: 100%; }
+
+.bubblemaps-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'OptimusPrinceps', serif;
+  text-transform: lowercase;
+  overflow: hidden; /* no page-level scroll jump */
+}
+
+/* -----------------------------------------
+   Unified header (grid)
+------------------------------------------ */
+.header.header--dashboard {
+  display: grid !important;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  background: var(--bg-alt);
+  padding: 0 1rem;
+  height: 70px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  /* subtle bottom line that visually continues into pane */
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.header__logo { grid-column: 1; justify-self: start; height: 60px; }
+.header__actions { grid-column: 3; justify-self: end; display: flex; align-items: center; }
+.header__btn--sm { padding: 0.4rem 1rem; font-size: 0.9rem; }
+
+/* center nav in middle column */
+.dashboard-nav { grid-column: 2; justify-self: center; display: flex; gap: 0.75rem; margin: 0; }
+.dashboard-nav__item { background: var(--card); }
+.dashboard-nav__item:hover { background: var(--primary) !important; }
+.dashboard-nav__item.active { background: var(--primary) !important; }
+.dashboard-nav__icon, .dashboard-nav__label { display: inline-flex; align-items: center; }
+
+/* -----------------------------------------
+   Filter Pane — wider, smooth slide, no overlap
+   Uses transforms (not margin) to avoid reflow.
+------------------------------------------ */
+.filter-pane {
+  position: absolute;
+  top: 70px;             /* aligned with header height */
+  bottom: 0;
+  left: 0;
+  width: var(--pane-width);
+  background: var(--bg-alt);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;      /* scroll inside the pane only */
+  -webkit-overflow-scrolling: touch;
+  border-right: 1px solid rgba(255,255,255,0.08);
+
+  /* smooth motion */
+  transform: translateX(-100%);
+  transition: transform 0.32s cubic-bezier(.22,.61,.36,1);
+  z-index: 90;           /* under header, over graph */
+}
+.filter-pane.open   { transform: translateX(0); }
+.filter-pane.closed { transform: translateX(-100%); }
+
+.filter-pane h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  padding-bottom: 0.35rem;
+}
+.filter-pane label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.9rem;
+}
+.filter-pane input,
+.filter-pane select {
+  margin-top: 0.35rem;
+  padding: 0.6rem 0.65rem;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: var(--radius);
+  background: #222;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.filter-pane input::placeholder { color: #8b8b8b; }
+
+.apply-btn {
+  margin-top: 0.25rem;
+  padding: 0.65rem 0.9rem;
+  background: var(--primary);
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 0.2s;
+}
+.apply-btn:hover { transform: translateY(-1px); }
+
+.fp-error {
+  color: #ff4d4d;
+  font-size: 0.85rem;
+}
+
+/* -----------------------------------------
+   Persistent Toggle — fixed, no layout shift
+------------------------------------------ */
+.pane-toggle {
+  position: fixed;
+  top: calc(70px + 12px); /* just under header */
+  left: var(--pane-width);
+  width: 36px;
+  height: 48px;
+  background: var(--primary);
+  color: var(--text);
+  border: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 120;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+  transition: left 0.32s cubic-bezier(.22,.61,.36,1), opacity 0.2s;
+}
+.pane-toggle.closed {
+  left: 0;
+}
+
+/* -----------------------------------------
+   Graph Pane — slides with transform (no reflow)
+------------------------------------------ */
+.graph-pane {
+  position: absolute;
+  top: 70px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg);
+
+  /* smooth slide to the right when pane opens */
+  transform: translateX(0);
+  transition: transform 0.32s cubic-bezier(.22,.61,.36,1);
+}
+.pane-open  .graph-pane { transform: translateX(var(--pane-width)); }
+.pane-closed .graph-pane { transform: translateX(0); }
+
+/* -----------------------------------------
+   Loading overlay
+------------------------------------------ */
+.loading {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  padding: 0.75rem 1.5rem;
+  background: rgba(0,0,0,0.6);
+  color: var(--text);
+  border-radius: var(--radius);
+}

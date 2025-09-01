@@ -1,0 +1,28 @@
+// src/setupProxy.js
+const { createProxyMiddleware } = require('http-proxy-middleware');
+
+/**
+ * Local dev proxy → Bluefin final host (avoids redirect hop).
+ * Frontend calls: /api/insidex/<path>
+ * Upstream hits:  https://spot.api.sui-prod.bluefin.io/external-api/insidex/<path>
+ */
+module.exports = function (app) {
+  app.use(
+    '/api/insidex',
+    createProxyMiddleware({
+      target: 'https://spot.api.sui-prod.bluefin.io',
+      changeOrigin: true,
+      // /api/insidex/... -> /external-api/insidex/...
+      pathRewrite: { '^/api/insidex': '/external-api/insidex' },
+
+      // IMPORTANT: set API key header here (before request is sent)
+      headers: {
+        'x-api-key': process.env.REACT_APP_INSIDEX_API_KEY || '',
+      },
+
+      logLevel: 'debug',
+      // Do NOT use onProxyReq; that caused "ERR_HTTP_HEADERS_SENT"
+      // Do NOT set followRedirects; there's no redirect with this target.
+    })
+  );
+};
