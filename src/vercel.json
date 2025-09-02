@@ -1,6 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/insidex/(.*)", "destination": "/api/insidex?path=$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
