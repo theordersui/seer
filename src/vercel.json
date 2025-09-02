@@ -1,12 +1,9 @@
 {
   "rewrites": [
-    {
-      "source": "/api/insidex/:path*",
-      "destination": "/api/insidex.js"
-    },
-    {
-      "source": "/:path*",
-      "destination": "/index.html"
-    }
-  ]
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/**/*.js": { "runtime": "nodejs20.x" }
+  }
 }
