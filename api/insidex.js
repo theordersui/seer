@@ -1,11 +1,11 @@
-const { createProxyMiddleware } = require('http-proxy-middleware');
+import { createProxyMiddleware } from 'http-proxy-middleware';
 
-module.exports = createProxyMiddleware({
+export default createProxyMiddleware({
   target: 'https://spot.api.sui-prod.bluefin.io',
   changeOrigin: true,
   pathRewrite: { '^/api/insidex': '/external-api/insidex' },
   on: {
-    proxyReq: (proxyReq) => {
+    proxyReq: (proxyReq, req, res) => {
       proxyReq.setHeader('x-api-key', process.env.INSIDEX_API_KEY || '');
     },
     error: (err, req, res) => {
@@ -14,5 +14,5 @@ module.exports = createProxyMiddleware({
       res.end(JSON.stringify({ error: 'Proxy error', detail: err.message || 'unknown' }));
     }
   },
-  logLevel: 'debug' // Change to 'silent' in prod if you don't want logs.
+  logLevel: 'debug'
 });

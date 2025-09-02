@@ -1,10 +1,11 @@
 {
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/insidex/(.*)",
-      "dest": "/api/insidex/[...path].js",
-      "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"]
-    },
+      "source": "/api/insidex/(.*)",
+      "destination": "/api/insidex.js"
+    }
+  ],
+  "routes": [
     { "handle": "filesystem" }
   ]
 }
