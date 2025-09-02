@@ -1,5 +1,8 @@
 export default async function handler(req, res) {
-  const targetUrl = "https://api-ex.insidex.trade/coins-transfer/addresses-sent-to/0x4a81a450d6cbb3c373c80b542c20523f7eab8c39c346ef521c54526e61d2baa6";
+  const address = (req.query.address || "").toString().trim();
+  if (!address) return res.status(400).json({ error: "missing_address" });
+
+  const targetUrl = `https://api-ex.insidex.trade/coins-transfer/addresses-sent-to/${encodeURIComponent(address)}`;
   const key = process.env.INSIDEX_API_KEY || "";
 
   if ((req.query.debug || "") === "1") {
@@ -8,8 +11,8 @@ export default async function handler(req, res) {
 
   try {
     const upstream = await fetch(targetUrl, {
-      headers: { "x-api-key": key, "user-agent": "vercel-proxy" },
       method: "GET",
+      headers: { "x-api-key": key, "user-agent": "vercel-proxy" },
     });
     const body = await upstream.arrayBuffer();
     res.status(upstream.status);

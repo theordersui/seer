@@ -302,8 +302,10 @@ export default function BubbleMaps() {
       const existingIds = new Set(Object.keys(beforePositions));
 
       const [sent, recv] = await Promise.all([
-        api.get(`/coins-transfer/addresses-sent-to/${address}`),
-        api.get(`/coins-transfer/addresses-received-from/${address}`),
+        api.get('/sent',     { params: { address } }),
+        api.get('/received', { params: { address } }),
+        // api.get(`/coins-transfer/addresses-sent-to/${address}`),
+        // api.get(`/coins-transfer/addresses-received-from/${address}`),
       ]);
 
       const fresh = [
