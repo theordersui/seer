@@ -1,51 +1,64 @@
-// Serverless proxy for production on Vercel.
-// Maps:  /api/insidex/<anything>  →  https://spot.api.sui-prod.bluefin.io/external-api/insidex/<anything>
-// Adds:  x-api-key from env (server-side, never exposed to the browser)
-
 export default async function handler(req, res) {
+  // Only GET/HEAD for now
+  if (!['GET', 'HEAD'].includes(req.method)) {
+    res.setHeader('Allow', 'GET, HEAD');
+    return res.status(405).json({ error: 'method_not_allowed' });
+  }
+
+  // Catch-all segments after /api/insidex/
+  const { path = [], debug } = req.query;
+  // Keep the original querystring for real calls (but strip debug flag)
+  const urlStr = req.url || '';
+  const qs = urlStr.includes('?') ? urlStr.slice(urlStr.indexOf('?')) : '';
+  const qsClean = qs.replace(/([?&])debug=1(&|$)/, (m, a, b) => (a === '?' && b ? '?' : a === '?' ? '' : b));
+
+  const base =
+    process.env.INX_BASEURL ||
+    'https://spot.api.sui-prod.bluefin.io/external-api/insidex';
+
+  const slug = Array.isArray(path) ? path.join('/') : String(path || '');
+  const targetUrl = `${base.replace(/\/+$/, '')}/${slug}${qsClean}`;
+
+  const haveKey = !!process.env.INSIDEX_API_KEY;
+
+  // --- DEBUG SHORT-CIRCUIT ---
+  if (debug === '1') {
+    return res.status(200).json({
+      matched: true,
+      path,
+      targetUrl,
+      haveKey,
+      method: req.method,
+      base
+    });
+  }
+
   try {
-    // Only proxy GET by default (your endpoints are GET). Add others if you need them.
-    if (!['GET', 'HEAD'].includes(req.method)) {
-      res.setHeader('Allow', 'GET, HEAD');
-      return res.status(405).json({ error: 'method_not_allowed' });
-    }
-
-    // Capture the dynamic rest of the path and any query string
-    const { path = [] } = req.query; // array from [...path]
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-
-    // Base to avoid the redirect hop, same as your dev comment
-    const base =
-      process.env.INX_BASEURL ||
-      'https://spot.api.sui-prod.bluefin.io/external-api/insidex';
-
-    const targetUrl = `${base}/${Array.isArray(path) ? path.join('/') : path}${qs}`;
-
     const upstream = await fetch(targetUrl, {
       method: req.method,
       headers: {
         'x-api-key': process.env.INSIDEX_API_KEY || '',
-        // optional: forward UA for debugging
-        'user-agent': req.headers['user-agent'] || 'vercel-proxy',
-        // don't forward host/origin; upstream decides CORS, but we are server-side anyway
-      },
+        'user-agent': req.headers['user-agent'] || 'vercel-proxy'
+      }
     });
 
-    // Mirror upstream status & body
-    const contentType = upstream.headers.get('content-type') || 'application/json';
-    res.status(upstream.status);
-    res.setHeader('content-type', contentType);
+    // Always return upstream body so 4xx/5xx include the message
+    const text = await upstream.text();
 
-    // You can forward cache headers if provided:
+    res.status(upstream.status);
+    res.setHeader('x-proxy-target', targetUrl);
+    res.setHeader('content-type', upstream.headers.get('content-type') || 'text/plain');
+
     const cache = upstream.headers.get('cache-control');
     if (cache) res.setHeader('cache-control', cache);
 
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    return res.send(buf);
+    return res.send(text);
   } catch (err) {
-    return res.status(500).json({
-      error: 'proxy_failed',
-      message: err?.message || 'Internal proxy error',
+    return res.status(502).json({
+      error: 'bad_gateway',
+      message: err?.message || 'fetch failed',
+      targetUrl,
+      haveKey
     });
   }
 }
