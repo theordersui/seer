@@ -22,7 +22,7 @@ export default async function handler(req, res) {
     }
 
     const headers = new Headers();
-    headers.set('x-api-key', process.env.INSIDEX_API_KEY || '');
+    headers.set('x-api-key', process.env.REACT_APP_INSIDEX_API_KEY || '');
     const ct = req.headers['content-type'];
     if (ct) headers.set('content-type', ct);
 
