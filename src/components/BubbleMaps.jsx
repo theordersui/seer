@@ -14,32 +14,27 @@ import Logo from '../assets/seer.png';
 import '../pages/LandingPage.css';
 import '../pages/Dashboard.css';
 import './BubbleMaps.css';
+import CoinCreatorScanner from './CoinCreatorScanner';
 
 /* ========= Helpers / constants ========= */
-const BRAND_RED = '#c02b2b';
+const BRAND_RED   = '#c02b2b';
 const ELECTRIC_BLUE = '#00c8ff';           // receives → root/anchors
 const NAME_HIT_YELLOW = '#ffd84d';         // SuiNS nodes
+const NODE_GRAY   = '#888';
+const CREATOR_PURPLE = '#a461ff';          // coin creator nodes
 const DEFAULT_DECIMALS = 9;
 
 /** Exact type overrides (most precise) */
-const DECIMALS_BY_TYPE = {
-  '0x2::sui::SUI': 9,
-};
+const DECIMALS_BY_TYPE = { '0x2::sui::SUI': 9 };
 
 /** Fallback by symbol (last segment). Common 6-dec stablecoins etc. */
-const DECIMALS_BY_SYMBOL = {
-  usdc: 6,
-  usdt: 6,
-  usd: 6,
-  wusdc: 6,
-};
+const DECIMALS_BY_SYMBOL = { usdc: 6, usdt: 6, usd: 6, wusdc: 6 };
 
 const api = axios.create({ baseURL: '/api/insidex' });
 
 /** Shinami (Sui mainnet) */
 const SHINAMI_KEY = 'us1_sui_mainnet_12ba023125f94e419ae62464f131cca6';
 const SHINAMI_ENDPOINT = `https://api.us1.shinami.com/sui/node/v1/${SHINAMI_KEY}`;
-// polite pacing between calls (adjust if still rate-limited)
 const SLEEP_MS = 15;
 
 const coinTypeToSymbolLower = (coinType) => {
@@ -60,7 +55,7 @@ const NODE_BORDER   = 2;
 const NODE_GAP      = 12;
 const EFFECTIVE_DIAM = NODE_DIAMETER + NODE_BORDER;
 
-/** how much farther the clicked node moves away from the root on each click */
+/** how much farther the clicked node moves away from the root on each expand */
 const EDGE_GROWTH_PER_CLICK = 800;
 
 /** Radius needed so N equal circles fit around circumference */
@@ -84,6 +79,13 @@ function ringNoOverlap(center, ids, { minRadius = 240, nodeSize = EFFECTIVE_DIAM
   return { positions: out, radius: R };
 }
 
+/** datetime helpers */
+const toLocalDatetimeSeconds = (d) => {
+  const dt = new Date(d);
+  const tzAdjusted = new Date(dt.getTime() - dt.getTimezoneOffset() * 60000);
+  return tzAdjusted.toISOString().slice(0, 19);
+};
+
 /* ========= Component ========= */
 export default function BubbleMaps() {
   const navigate = useNavigate();
@@ -93,15 +95,14 @@ export default function BubbleMaps() {
   // Start BLANK; no auto-run
   const [wallet, setWallet] = useState('');
   const [rawTx, setRawTx] = useState([]);
-  const [coinOptions, setCoinOptions] = useState([]);
+  const [coinOptions, setCoinOptions] = useState([]); // for global filter + per-coin rules
   const [timeRange, setTimeRange] = useState({ min: '', max: '' });
 
-  // optional global coin filter (ignored if per-coin rules exist)
+  // Global coin + date filters
   const [filters, setFilters] = useState({ coin: '', start: '', end: '' });
 
-  // DRAFT per-coin minimums (UI only)
+  // Per-coin minimums
   const [draftRules, setDraftRules] = useState([]);     // [{ coin: 'sui', min: 10 }]
-  // COMMITTED per-coin minimums used by the graph
   const [perCoinRules, setPerCoinRules] = useState([]); // [{ coin: 'sui', min: 10 }]
 
   const [elements, setElements] = useState([]);
@@ -109,22 +110,34 @@ export default function BubbleMaps() {
   const [error, setError] = useState('');
   const [paneOpen, setPaneOpen] = useState(true);
 
-  /** fixed root address (Node A), set on "Apply" (replace=true) */
+  /** RIGHT: transactions pane controls */
+  const [txnPaneOpen, setTxnPaneOpen] = useState(true);
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [selectedNodeTx, setSelectedNodeTx] = useState([]); // filtered, sorted
+
+  /** fixed root address (Node A) */
   const [rootId, setRootId] = useState(null);
-  /** bump count per clicked node; each click moves it farther from the root */
+  /** bump count per clicked node; each expand moves it farther from the root */
   const [nodeBumps, setNodeBumps] = useState({}); // { [nodeId]: number }
-  /** expansion groups: which nodes were generated from a given node’s expansion */
+  /** expansion groups */
   const [expansionGroups, setExpansionGroups] = useState({}); // { [anchorId]: string[] }
 
   /** SuiNS cache: undefined=unknown(fetch), null=miss, string=hit */
   const [nameByAddress, setNameByAddress] = useState({});
-  /** in-flight guard to avoid duplicate calls */
+
+  /** Coin creators results */
+  const [creatorSet, setCreatorSet] = useState({});         // { addrLower: true }
+  const [coinsByCreator, setCoinsByCreator] = useState({}); // { addrLower: [{symbol,name,coinType}] }
+
+  /** in-flight guard & queue for SuiNS */
   const inflight = useRef(new Set());
-  /** simple FIFO queue for addresses to resolve (rate-limited) */
   const resolveQueue = useRef([]);
   const queueRunning = useRef(false);
 
   const cyRef = useRef(null);
+
+  // Tracks the last automatically-applied range so we only auto-update if user hasn't customized
+  const autoRangeRef = useRef({ start: '', end: '' });
 
   useEffect(() => { if (!isConnected) navigate('/'); }, [isConnected, navigate]);
 
@@ -149,9 +162,16 @@ export default function BubbleMaps() {
   /* -------- tx filtering (date + coin/min rules) -------- */
   const txPassesFilters = useCallback((t, opts, rules) => {
     const { coin, start, end } = opts;
+
     const ts = new Date(t.timestampMs);
-    if (start && ts < new Date(start)) return false;
-    if (end && ts > new Date(end)) return false;
+    if (start) {
+      const startDt = new Date(start);
+      if (ts < startDt) return false;
+    }
+    if (end) {
+      const endDt = new Date(end);
+      if (ts > endDt) return false;
+    }
 
     const symLower = coinTypeToSymbolLower(t.coin);
     const humanAmt = t.amount / Math.pow(10, getDecimals(t.coin));
@@ -159,7 +179,7 @@ export default function BubbleMaps() {
     if (rules && rules.length) {
       const rule = rules.find(r => r.coin === symLower);
       if (rule) return humanAmt >= Number(rule.min || 0);
-      return true;
+      return !coin || symLower === coin;
     } else {
       if (coin && symLower !== coin) return false;
       return true;
@@ -168,11 +188,9 @@ export default function BubbleMaps() {
 
   /* -------- build elements from tx list -------- */
   const buildElements = useCallback((txs, mainAddress, expandSpec = null) => {
-    // STRICT direction-per-coin aggregation
     const edgeCoinAgg = new Map(); // key: `${from}|${to}|${coinType}`
     const nodes = new Map();
 
-    // helper: 3..4 fallback and SuiNS label/color
     const shortAddr = (addr='') => {
       const s = String(addr);
       if (s.length <= 7) return s;
@@ -183,11 +201,16 @@ export default function BubbleMaps() {
     const nodeDatum = (addr, baseColor) => {
       const hit = nameByAddress[addr];
       const hasName = typeof hit === 'string' && hit.length > 0;
+
+      const isCreator = !!creatorSet[String(addr).toLowerCase()];
+      const color = isCreator ? CREATOR_PURPLE : (hasName ? NAME_HIT_YELLOW : baseColor);
+      const textColor = isCreator ? '#000' : (hasName ? '#000' : '#fff');
+
       return {
         id: addr,
         label: hasName ? truncSuiName(hit) : shortAddr(addr),
-        color: hasName ? NAME_HIT_YELLOW : baseColor,
-        textColor: hasName ? '#000' : '#fff',
+        color,
+        textColor
       };
     };
 
@@ -198,12 +221,12 @@ export default function BubbleMaps() {
       const tgt = t.to;
       const coinType = t.coin;
       const decimals = getDecimals(coinType);
-      const converted = t.amount / Math.pow(10, decimals); // human amount
+      const converted = t.amount / Math.pow(10, decimals);
 
-      if (!nodes.has(src)) nodes.set(src, nodeDatum(src, '#888'));
-      if (!nodes.has(tgt)) nodes.set(tgt, nodeDatum(tgt, '#888'));
+      if (!nodes.has(src)) nodes.set(src, nodeDatum(src, NODE_GRAY));
+      if (!nodes.has(tgt)) nodes.set(tgt, nodeDatum(tgt, NODE_GRAY));
 
-      const key = `${src}|${tgt}|${coinType}`; // DIRECTIONAL key
+      const key = `${src}|${tgt}|${coinType}`;
       if (!edgeCoinAgg.has(key)) {
         edgeCoinAgg.set(key, {
           source: src, target: tgt,
@@ -216,12 +239,10 @@ export default function BubbleMaps() {
       e.total += converted;
     }
 
-    // Positions
     const currentPos = snapshotPositions();
     const nodeArr = Array.from(nodes.values());
     const posOut = { ...currentPos };
 
-    // Initial fan-out around (0,0): root at center, first ring of others
     if (Object.keys(currentPos).length === 0) {
       const others = nodeArr.map(n => n.id).filter(id => id !== mainAddress);
       const { positions: placed } = ringNoOverlap({ x:0, y:0 }, others, { minRadius: 320, gap: NODE_GAP });
@@ -229,7 +250,6 @@ export default function BubbleMaps() {
       Object.assign(posOut, placed);
     }
 
-    // Expansion: move only clicked node farther from fixed root; ring its new neighbors
     if (expandSpec && expandSpec.anchorId && expandSpec.rootId && Array.isArray(expandSpec.newIds)) {
       const anchorId = expandSpec.anchorId;
       const rootId   = expandSpec.rootId;
@@ -253,7 +273,6 @@ export default function BubbleMaps() {
       }
     }
 
-    // ---- NEW: compute all "receive anchor" targets (root + every expansion anchor)
     const receiveTargetSetLower = new Set(
       [
         ...(mainAddress ? [String(mainAddress).toLowerCase()] : []),
@@ -263,10 +282,9 @@ export default function BubbleMaps() {
 
     const nodeEls = nodeArr.map(n => ({ data: n, position: posOut[n.id] || { x: 0, y: 0 } }));
 
-    // Build edges: one element per (from,to,coinType) with its own summary (no merging opposite dir)
     const edgeEls = [];
     for (const [edgeKey, e] of edgeCoinAgg.entries()) {
-      const label = `${e.count} txs: ${fmtInt(e.total)} ${e.symLower}`;
+      const label = `${e.count} tx${e.count > 1 ? 's' : ''}: ${fmtInt(e.total)} ${e.symLower}`;
       const tgtLower = String(e.target || '').toLowerCase();
       const isReceiveToAnyAnchor = receiveTargetSetLower.has(tgtLower);
       edgeEls.push({
@@ -275,21 +293,32 @@ export default function BubbleMaps() {
           source: e.source,
           target: e.target,
           label,
-          color: isReceiveToAnyAnchor ? ELECTRIC_BLUE : BRAND_RED,  // electric blue for receives to any anchor
+          color: isReceiveToAnyAnchor ? ELECTRIC_BLUE : BRAND_RED,
           width: 2
         }
       });
     }
 
     return [...nodeEls, ...edgeEls];
-  // include expansionGroups so colors update as clusters are added
-  }, [snapshotPositions, nameByAddress, expansionGroups]);
+  }, [snapshotPositions, nameByAddress, creatorSet, expansionGroups]);
 
   const applyFilters = useCallback((txs, opts, rules) => {
     const filtered = txs.filter(t => txPassesFilters(t, opts, rules));
     const els = buildElements(filtered, rootId || wallet, null);
     setElements(els);
   }, [buildElements, txPassesFilters, wallet, rootId]);
+
+  /** Compute the auto range over given txs (pads ±1s) */
+  const computeRangeFor = useCallback((txs) => {
+    if (!txs?.length) return { startStr: '', endStr: '' };
+    const times = txs.map(t => new Date(t.timestampMs)).filter(Boolean);
+    if (!times.length) return { startStr: '', endStr: '' };
+    const minT = new Date(Math.min(...times.map(d => +d)));
+    const maxT = new Date(Math.max(...times.map(d => +d)));
+    const paddedStart = new Date(minT.getTime() - 1000);
+    const paddedEnd   = new Date(maxT.getTime() + 1000);
+    return { startStr: toLocalDatetimeSeconds(paddedStart), endStr: toLocalDatetimeSeconds(paddedEnd) };
+  }, []);
 
   /* -------- fetchers (initial apply + expand) -------- */
   const fetchGraphFor = useCallback(async (address, { replace, anchorIdForNew = null } = { replace: true, anchorIdForNew: null }) => {
@@ -333,18 +362,30 @@ export default function BubbleMaps() {
       const symbols = Array.from(new Set(merged.map(t => coinTypeToSymbolLower(t.coin)))).sort((a,b)=>a.localeCompare(b));
       setCoinOptions(symbols);
 
-      if (replace) {
-        const times = merged.map(t => new Date(t.timestampMs)).filter(Boolean);
-        if (times.length) {
-          const minT = new Date(Math.min(...times.map(d => +d)));
-          const maxT = new Date(Math.max(...times.map(d => +d)));
-          const iso16 = (d) => d.toISOString().slice(0,16);
-          setTimeRange({ min: iso16(minT), max: iso16(maxT) });
-          setFilters(f => ({ ...f, start: iso16(minT), end: iso16(maxT) }));
+      // AUTO RANGE every fetch; expand filters if user hasn't customized
+      const { startStr, endStr } = computeRangeFor(merged);
+
+      if (startStr && endStr) { setTimeRange({ min: startStr, max: endStr }); }
+
+      const { start: autoStart, end: autoEnd } = autoRangeRef.current;
+      const userHasCustom =
+        (filters.start && filters.start !== autoStart) ||
+        (filters.end && filters.end !== autoEnd);
+
+      if (startStr && endStr) {
+        if (replace || !userHasCustom) {
+          setFilters(f => ({ ...f, start: startStr, end: endStr }));
+          autoRangeRef.current = { start: startStr, end: endStr };
+        } else {
+          autoRangeRef.current = { start: startStr, end: endStr };
         }
       }
 
-      const opts = { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end };
+      const opts = {
+        coin: (filters.coin || '').toLowerCase(),
+        start: (replace || !userHasCustom) ? startStr : filters.start,
+        end:   (replace || !userHasCustom) ? endStr   : filters.end
+      };
       const filtered = merged.filter(t => txPassesFilters(t, opts, perCoinRules));
 
       let expandSpec = null;
@@ -375,7 +416,7 @@ export default function BubbleMaps() {
 
       if (replace) {
         const rootCounterparties = new Set();
-        filtered.forEach(t => {
+        merged.forEach(t => {
           if (t.from?.toLowerCase() === address.toLowerCase()) rootCounterparties.add(t.to);
           if (t.to?.toLowerCase() === address.toLowerCase()) rootCounterparties.add(t.from);
         });
@@ -390,7 +431,7 @@ export default function BubbleMaps() {
     } finally {
       if (replace) setLoading(false);
     }
-  }, [rawTx, filters, perCoinRules, rootId, nodeBumps, buildElements, snapshotPositions, txPassesFilters]);
+  }, [rawTx, filters, perCoinRules, rootId, nodeBumps, buildElements, snapshotPositions, txPassesFilters, computeRangeFor]);
 
   /* -------- re-apply when COMMITTED rules/filters change -------- */
   useEffect(() => {
@@ -401,17 +442,32 @@ export default function BubbleMaps() {
     }
   }, [filters, perCoinRules, rawTx, applyFilters]);
 
+  /* -------- RIGHT PANE: derive tx list for selected node (sorted desc) -------- */
+  const computeNodeTx = useCallback((nodeId) => {
+    if (!nodeId) return [];
+    const opts = { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end };
+    return rawTx
+      .filter(t => txPassesFilters(t, opts, perCoinRules))
+      .filter(t =>
+        String(t.from).toLowerCase() === nodeId.toLowerCase() ||
+        String(t.to).toLowerCase() === nodeId.toLowerCase()
+      )
+      .sort((a,b) => b.timestampMs - a.timestampMs);
+  }, [rawTx, filters, perCoinRules, txPassesFilters]);
+
+  useEffect(() => {
+    setSelectedNodeTx(computeNodeTx(selectedNodeId));
+  }, [selectedNodeId, rawTx, filters, perCoinRules, computeNodeTx]);
+
   /* -------- Name resolution queue (rate-limited, non-blocking) -------- */
   const enqueueAddresses = useCallback((addresses) => {
-    // only queue addresses with unknown cache and not already enqueued or inflight
     const unique = Array.from(new Set(addresses));
     unique.forEach(a => {
-      if (typeof nameByAddress[a] !== 'undefined') return; // already known (hit/miss)
-      if (inflight.current.has(a)) return;                  // already fetching
-      if (resolveQueue.current.includes(a)) return;         // already queued
+      if (typeof nameByAddress[a] !== 'undefined') return;
+      if (inflight.current.has(a)) return;
+      if (resolveQueue.current.includes(a)) return;
       resolveQueue.current.push(a);
     });
-    // kick the runner (non-blocking)
     if (!queueRunning.current) runQueue();
   }, [nameByAddress]);
 
@@ -426,12 +482,10 @@ export default function BubbleMaps() {
         const addr = resolveQueue.current.shift();
         if (!addr) break;
 
-        // guard
         if (typeof nameByAddress[addr] !== 'undefined') continue;
         if (inflight.current.has(addr)) continue;
         inflight.current.add(addr);
 
-        // do the request (wrapped to avoid throwing)
         try {
           const payload = {
             jsonrpc: '2.0',
@@ -464,35 +518,30 @@ export default function BubbleMaps() {
           inflight.current.delete(addr);
         }
 
-        // gentle pacing to avoid rate limits
         await sleep(SLEEP_MS);
       }
     } finally {
       queueRunning.current = false;
-      // If new items were queued while running finished, run again
       if (resolveQueue.current.length) runQueue();
     }
   }, [nameByAddress]);
 
-  // When elements change, collect node ids and enqueue unknowns (no duplicates).
+  // queue any new node ids for SuiNS lookup
   useEffect(() => {
     const nodeIds = elements
-      .filter(el => el.data && el.data.id && !el.data.source) // nodes only
+      .filter(el => el.data && el.data.id && !el.data.source)
       .map(el => el.data.id);
     if (nodeIds.length) enqueueAddresses(nodeIds);
   }, [elements, enqueueAddresses]);
 
-  // When name cache updates, rebuild labels/colors (settles quickly).
+  // When name cache updates, rebuild graph and refresh right pane labels
   useEffect(() => {
     if (!rawTx.length) return;
-    applyFilters(
-      rawTx,
-      { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end },
-      perCoinRules
-    );
+    applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, perCoinRules);
+    setSelectedNodeTx(computeNodeTx(selectedNodeId));
   }, [nameByAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* -------- refit when pane toggles -------- */
+  /* -------- refit when panes toggle -------- */
   useEffect(() => {
     const id = setTimeout(() => {
       const cy = cyRef.current;
@@ -500,19 +549,45 @@ export default function BubbleMaps() {
       try { cy.resize(); cy.fit({ padding: 50 }); cy.center(); } catch {}
     }, 320);
     return () => clearTimeout(id);
-  }, [paneOpen]);
+  }, [paneOpen, txnPaneOpen]);
 
-  /* -------- node interactions: expand on tap, drag own expansion group -------- */
+  /* -------- node interactions: click vs double-click (no interference) -------- */
   const bindCyHandlers = useCallback((cy) => {
     if (!cy) return;
     cy.off('tap'); cy.off('grab'); cy.off('drag'); cy.off('free');
 
+    // click orchestrator: single vs double
+    const click = { lastId: null, lastTs: 0, timer: null, threshold: 280 };
+
     cy.on('tap', 'node', async (evt) => {
       const node = evt.target;
       const addr = String(node.id());
-      await fetchGraphFor(addr, { replace: false, anchorIdForNew: addr });
+      const now = Date.now();
+
+      if (click.timer && click.lastId === addr && (now - click.lastTs) <= click.threshold) {
+        // it's a double-click → cancel pending single click, EXPAND ONLY
+        clearTimeout(click.timer);
+        click.timer = null;
+        click.lastId = null;
+        click.lastTs = 0;
+
+        await fetchGraphFor(addr, { replace: false, anchorIdForNew: addr });
+        return;
+      }
+
+      // schedule single-click behavior
+      click.lastId = addr;
+      click.lastTs = now;
+      if (click.timer) { clearTimeout(click.timer); }
+      click.timer = setTimeout(() => {
+        // Single click → open right pane & show txs for this node
+        setSelectedNodeId(addr);
+        if (!txnPaneOpen) setTxnPaneOpen(true);
+        click.timer = null;
+      }, click.threshold);
     });
 
+    // Group-drag behavior unchanged
     const dragState = { anchorId: null, last: null, followers: [] };
 
     cy.on('grab', 'node', (evt) => {
@@ -548,11 +623,12 @@ export default function BubbleMaps() {
       dragState.last = null;
       dragState.followers = [];
     });
-  }, [fetchGraphFor, expansionGroups]);
+  }, [fetchGraphFor, expansionGroups, txnPaneOpen]);
 
   /* -------- UI helpers for DRAFT rules -------- */
-  const addDraftRule = () => setDraftRules(r => [...r, { coin: '', min: 0 }]);
-  const updateDraftRule = (i, patch) => setDraftRules(r => r.map((row, idx) => idx === i ? { ...row, ...patch } : row));
+  const addDraftRule = () => setDraftRules(prev => [...prev, { coin: '', min: 0 }]);
+  const updateDraftRule = (i, patch) =>
+    setDraftRules(prev => prev.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
 
   const removeDraftRule = (i) => {
     setDraftRules(prev => {
@@ -561,13 +637,12 @@ export default function BubbleMaps() {
 
       if (toRemove?.coin) {
         const coin = String(toRemove.coin).toLowerCase();
-        setPerCoinRules(prevCommitted => {
-          const updated = prevCommitted.filter(r => r.coin !== coin);
-          if (rawTx.length) {
-            applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, updated);
-          }
-          return updated;
-        });
+        const updated = perCoinRules.filter(r => r.coin !== coin);
+        setPerCoinRules(updated);
+        if (rawTx.length) {
+          applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, updated);
+          setSelectedNodeTx(computeNodeTx(selectedNodeId));
+        }
       }
       return next;
     });
@@ -580,11 +655,58 @@ export default function BubbleMaps() {
     setPerCoinRules(normalized);
     if (rawTx.length) {
       applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, normalized);
+      setSelectedNodeTx(computeNodeTx(selectedNodeId));
     }
   };
 
+  /* -------- helpers for right pane rendering -------- */
+  const shortAddr = (addr='') => {
+    const s = String(addr);
+    if (s.length <= 7) return s;
+    return `${s.slice(0,3)}..${s.slice(-4)}`;
+  };
+  const truncSuiName = (name='') => `${String(name).slice(0,9)}..`;
+  const nameOrShort = (addr) => {
+    const hit = nameByAddress[addr];
+    if (typeof hit === 'string' && hit) return truncSuiName(hit);
+    return shortAddr(addr);
+  };
+  const fullLabel = (addr) => nameByAddress[addr] || addr;
+
+  const formatDateOnly = (ms) => {
+    try { return new Date(ms).toLocaleDateString(undefined); }
+    catch { return String(ms); }
+  };
+  const digestLink = (digest) => `https://suivision.xyz/txblock/${digest}`;
+
+  const symbolOf = (coinType) => coinTypeToSymbolLower(coinType);
+  const formatAmountOnly = (coinType, rawAmount) => {
+    const dec = getDecimals(coinType);
+    const val = Number(rawAmount) / Math.pow(10, dec);
+    // whole numbers only
+    return Math.round(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  };
+
+  /** All current node ids (for scanner) */
+  const nodeIds = useMemo(() => {
+    return elements
+      .filter(el => el.data && el.data.id && !el.data.source)
+      .map(el => el.data.id);
+  }, [elements]);
+
+  /** Scanner completion handler */
+  const handleCreatorsDone = useCallback((result) => {
+    // result: { creatorSet: {addrLower:true}, coinsByCreator: {addrLower:[{symbol,name,coinType}]}}
+    setCreatorSet(result.creatorSet || {});
+    setCoinsByCreator(result.coinsByCreator || {});
+    if (rawTx.length) {
+      // rebuild graph to recolor creator nodes
+      applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, perCoinRules);
+    }
+  }, [applyFilters, rawTx, filters, perCoinRules]);
+
   return (
-    <div className={`bubblemaps-wrapper ${paneOpen ? 'pane-open' : 'pane-closed'}`}>
+    <div className={`bubblemaps-wrapper ${paneOpen ? 'pane-open' : 'pane-closed'} ${txnPaneOpen ? 'txn-open' : 'txn-closed'}`}>
       {/* header */}
       <header className="header header--dashboard">
         <img src={Logo} alt="cloak and dagger" className="header__logo" />
@@ -614,7 +736,7 @@ export default function BubbleMaps() {
         </div>
       </header>
 
-      {/* filter pane */}
+      {/* LEFT: filter pane */}
       <aside className={`filter-pane ${paneOpen ? 'open' : 'closed'}`}>
         <h2>filters</h2>
 
@@ -622,7 +744,7 @@ export default function BubbleMaps() {
           <input type="text" value={wallet} onChange={e => setWallet(e.target.value.trim())} placeholder="0x..." />
         </label>
 
-        {/* Optional global coin filter (ignored if committed per-coin rules exist) */}
+        {/* Global coin filter */}
         <label>coin (global)
           <select value={filters.coin} onChange={e => setFilters(f => ({ ...f, coin: e.target.value.toLowerCase() }))}>
             <option value="">all</option>
@@ -630,7 +752,45 @@ export default function BubbleMaps() {
           </select>
         </label>
 
-        {/* Per-coin minimums (DRAFT rows) */}
+        {/* Legend */}
+        <div className="legend">
+          <div className="legend-title">legend</div>
+          <div className="legend-items">
+            <div className="legend-item">
+              <span className="swatch circle root" />
+              <span>root (selected wallet)</span>
+            </div>
+            <div className="legend-item">
+              <span className="swatch circle creator" />
+              <span>coin creator</span>
+            </div>
+            <div className="legend-item">
+              <span className="swatch circle named" />
+              <span>named node (SuiNS)</span>
+            </div>
+            <div className="legend-item">
+              <span className="swatch circle other" />
+              <span>other node</span>
+            </div>
+            <div className="legend-item">
+              <span className="swatch edge recv" />
+              <span>receive → any anchor</span>
+            </div>
+            <div className="legend-item">
+              <span className="swatch edge send" />
+              <span>other flow</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Coin Creator Scanner (runs, then applies) */}
+        <CoinCreatorScanner
+          addresses={nodeIds}
+          rpcUrl={SHINAMI_ENDPOINT}
+          onDone={handleCreatorsDone}
+        />
+
+        {/* Per-coin minimums */}
         <div style={{ borderTop:'1px solid rgba(255,255,255,0.12)', paddingTop:'0.6rem' }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.35rem' }}>
             <h2 style={{ margin:0, fontSize:'1.0rem' }}>per-coin minimums</h2>
@@ -647,13 +807,13 @@ export default function BubbleMaps() {
             <div key={i} style={{ marginBottom:'0.75rem', padding:'0.5rem', background:'rgba(255,255,255,0.04)', borderRadius:8 }}>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.5rem', alignItems:'end' }}>
                 <label>coin
-                  <select value={row.coin} onChange={e => updateDraftRule(i, { coin: e.target.value.toLowerCase() })}>
+                  <select value={row.coin} onChange={e => setDraftRules(prev => prev.map((rw, idx) => idx === i ? { ...rw, coin: e.target.value.toLowerCase() } : rw))}>
                     <option value="">select…</option>
                     {coinOptions.map(sym => (<option key={sym} value={sym}>{sym}</option>))}
                   </select>
                 </label>
                 <label>min amount
-                  <input type="number" min="0" step="1" value={row.min} onChange={e => updateDraftRule(i, { min: e.target.value })}/>
+                  <input type="number" min="0" step="1" value={row.min} onChange={e => setDraftRules(prev => prev.map((rw, idx) => idx === i ? { ...rw, min: e.target.value } : rw))}/>
                 </label>
               </div>
               <div style={{ display:'flex', gap:'0.5rem', marginTop:'0.5rem' }}>
@@ -665,13 +825,25 @@ export default function BubbleMaps() {
         </div>
 
         <label>from
-          <input type="datetime-local" min={timeRange.min || undefined} max={timeRange.max || undefined}
-            value={filters.start} onChange={e => setFilters(f => ({ ...f, start: e.target.value }))} />
+          <input
+            type="datetime-local"
+            step="1"
+            min={timeRange.min || undefined}
+            max={timeRange.max || undefined}
+            value={filters.start}
+            onChange={e => setFilters(f => ({ ...f, start: e.target.value }))}
+          />
         </label>
 
         <label>to
-          <input type="datetime-local" min={timeRange.min || undefined} max={timeRange.max || undefined}
-            value={filters.end} onChange={e => setFilters(f => ({ ...f, end: e.target.value }))} />
+          <input
+            type="datetime-local"
+            step="1"
+            min={timeRange.min || undefined}
+            max={timeRange.max || undefined}
+            value={filters.end}
+            onChange={e => setFilters(f => ({ ...f, end: e.target.value }))}
+          />
         </label>
 
         <button
@@ -686,7 +858,7 @@ export default function BubbleMaps() {
         {error && <div className="fp-error">{error}</div>}
       </aside>
 
-      {/* toggle */}
+      {/* LEFT toggle */}
       <button
         className={`pane-toggle ${paneOpen ? 'open' : 'closed'}`}
         onClick={() => setPaneOpen(p => !p)}
@@ -694,6 +866,68 @@ export default function BubbleMaps() {
         title={paneOpen ? 'collapse filters' : 'expand filters'}
       >
         {paneOpen ? <FiChevronLeft /> : <FiChevronRight />}
+      </button>
+
+      {/* RIGHT: transactions pane */}
+      <aside className={`txn-pane ${txnPaneOpen ? 'open' : 'closed'}`}>
+        <h2>transactions {selectedNodeId ? `— ${nameOrShort(selectedNodeId)}` : ''}</h2>
+
+        {/* Coins created block (only if this node is a creator) */}
+        {selectedNodeId && coinsByCreator[String(selectedNodeId).toLowerCase()]?.length > 0 && (
+          <div className="creator-coins">
+            <div className="creator-title">coins created</div>
+            <ul>
+              {coinsByCreator[String(selectedNodeId).toLowerCase()].map((c, idx) => (
+                <li key={`${c.coinType || c.symbol || c.name || 'coin'}-${idx}`}>
+                  {c.symbol ? <span className="pill">{c.symbol}</span> : null}
+                  {c.name && (!c.symbol || c.name.toLowerCase() !== c.symbol.toLowerCase()) ? <span className="pill alt">{c.name}</span> : null}
+                  {c.coinType ? <span className="type">{c.coinType}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {!selectedNodeId && (
+          <div className="txn-empty">single-click a node to see its transactions.</div>
+        )}
+
+        {selectedNodeId && selectedNodeTx.length === 0 && (
+          <div className="txn-empty">no transactions in the current filters.</div>
+        )}
+
+        {selectedNodeId && selectedNodeTx.length > 0 && (
+          <div className="txn-table">
+            <div className="txn-row txn-header">
+              <div>date</div>
+              <div>from</div>
+              <div>to</div>
+              <div>coin</div>
+              <div>amount</div>
+              <div>digest</div>
+            </div>
+            {selectedNodeTx.map(t => (
+              <div className="txn-row" key={t.digest || `${t.from}-${t.to}-${t.timestampMs}`}>
+                <div>{formatDateOnly(t.timestampMs)}</div>
+                <div className="addr" title={fullLabel(t.from)}>{nameOrShort(t.from)}</div>
+                <div className="addr" title={fullLabel(t.to)}>{nameOrShort(t.to)}</div>
+                <div className="coin">{symbolOf(t.coin)}</div>
+                <div className="amt">{formatAmountOnly(t.coin, t.amount)}</div>
+                <div className="link"><a href={digestLink(t.digest)} target="_blank" rel="noreferrer">Link</a></div>
+              </div>
+            ))}
+          </div>
+        )}
+      </aside>
+
+      {/* RIGHT toggle */}
+      <button
+        className={`txn-toggle ${txnPaneOpen ? 'open' : 'closed'}`}
+        onClick={() => setTxnPaneOpen(p => !p)}
+        aria-label={txnPaneOpen ? 'collapse transactions' : 'expand transactions'}
+        title={txnPaneOpen ? 'collapse transactions' : 'expand transactions'}
+      >
+        {txnPaneOpen ? <FiChevronRight /> : <FiChevronLeft />}
       </button>
 
       {/* graph */}
@@ -711,7 +945,7 @@ export default function BubbleMaps() {
                 label: 'data(label)',
                 'font-family': 'OptimusPrinceps, sans-serif',
                 'font-size': '10px',
-                color: 'data(textColor)', // black for named nodes
+                color: 'data(textColor)',
                 'text-valign': 'center',
                 'text-halign': 'center',
                 width: NODE_DIAMETER,
@@ -725,14 +959,14 @@ export default function BubbleMaps() {
             {
               selector: 'edge',
               style: {
-                'curve-style': 'bezier',           // simple; no lane/curve tricks
+                'curve-style': 'bezier',
                 'edge-distances': 'node-position',
                 'line-color': 'data(color)',
                 'target-arrow-color': 'data(color)',
                 'target-arrow-shape': 'triangle',
                 width: 'data(width)',
                 label: 'data(label)',
-                'font-family': 'OptimusPrinceps, sans-serif',
+                'font-family': 'OptimusPrinceps', // keep consistent
                 'font-size': '10px',
                 color: '#fff',
                 'text-background-color': '#000',

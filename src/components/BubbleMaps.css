@@ -6,11 +6,19 @@
   --card: rgba(255, 255, 255, 0.08);
   --radius: 8px;
 
-  /* control pane width in ONE place */
-  --pane-width: 400px;
+  /* pane widths (wider) */
+  --pane-width: 520px;
+
+  /* legend colors (mirror JS constants) */
+  --node-gray: #888;
+  --node-root: #c02b2b;
+  --node-named: #ffd84d;
+  --node-creator: #a461ff;
+  --edge-recv: #00c8ff;
+  --edge-send: #c02b2b;
 }
 
-/* prevent horizontal scrollbars when pane slides */
+/* prevent horizontal scrollbars when panes slide */
 html, body { overflow-x: hidden; height: 100%; }
 
 .bubblemaps-wrapper {
@@ -22,7 +30,7 @@ html, body { overflow-x: hidden; height: 100%; }
   color: var(--text);
   font-family: 'OptimusPrinceps', serif;
   text-transform: lowercase;
-  overflow: hidden; /* no page-level scroll jump */
+  overflow: hidden;
 }
 
 /* -----------------------------------------
@@ -38,7 +46,6 @@ html, body { overflow-x: hidden; height: 100%; }
   position: sticky;
   top: 0;
   z-index: 100;
-  /* subtle bottom line that visually continues into pane */
   border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 .header__logo { grid-column: 1; justify-self: start; height: 60px; }
@@ -48,17 +55,15 @@ html, body { overflow-x: hidden; height: 100%; }
 /* center nav in middle column */
 .dashboard-nav { grid-column: 2; justify-self: center; display: flex; gap: 0.75rem; margin: 0; }
 .dashboard-nav__item { background: var(--card); }
-.dashboard-nav__item:hover { background: var(--primary) !important; }
-.dashboard-nav__item.active { background: var(--primary) !important; }
+.dashboard-nav__item:hover, .dashboard-nav__item.active { background: var(--primary) !important; }
 .dashboard-nav__icon, .dashboard-nav__label { display: inline-flex; align-items: center; }
 
 /* -----------------------------------------
-   Filter Pane — wider, smooth slide, no overlap
-   Uses transforms (not margin) to avoid reflow.
+   LEFT Filter Pane — smooth slide
 ------------------------------------------ */
 .filter-pane {
   position: absolute;
-  top: 70px;             /* aligned with header height */
+  top: 70px;
   bottom: 0;
   left: 0;
   width: var(--pane-width);
@@ -67,14 +72,13 @@ html, body { overflow-x: hidden; height: 100%; }
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  overflow-y: auto;      /* scroll inside the pane only */
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   border-right: 1px solid rgba(255,255,255,0.08);
 
-  /* smooth motion */
   transform: translateX(-100%);
   transition: transform 0.32s cubic-bezier(.22,.61,.36,1);
-  z-index: 90;           /* under header, over graph */
+  z-index: 90;
 }
 .filter-pane.open   { transform: translateX(0); }
 .filter-pane.closed { transform: translateX(-100%); }
@@ -120,12 +124,54 @@ html, body { overflow-x: hidden; height: 100%; }
   font-size: 0.85rem;
 }
 
+/* -------- Legend -------- */
+.legend {
+  padding: 0.75rem;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+}
+.legend-title {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  padding-bottom: 0.3rem;
+}
+.legend-items {
+  display: grid;
+  gap: 0.45rem;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+  color: #ddd;
+}
+.swatch.circle {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid rgba(0,0,0,0.6);
+}
+.swatch.edge {
+  width: 26px; height: 4px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.swatch.root    { background: var(--node-root); }
+.swatch.creator { background: var(--node-creator); }
+.swatch.named   { background: var(--node-named); border-color: rgba(0,0,0,0.2); }
+.swatch.other   { background: var(--node-gray); }
+.swatch.edge.recv { background: var(--edge-recv); }
+.swatch.edge.send { background: var(--edge-send); }
+
 /* -----------------------------------------
-   Persistent Toggle — fixed, no layout shift
+   LEFT Toggle
 ------------------------------------------ */
 .pane-toggle {
   position: fixed;
-  top: calc(70px + 12px); /* just under header */
+  top: calc(70px + 12px);
   left: var(--pane-width);
   width: 36px;
   height: 48px;
@@ -141,12 +187,72 @@ html, body { overflow-x: hidden; height: 100%; }
   box-shadow: 0 2px 10px rgba(0,0,0,0.25);
   transition: left 0.32s cubic-bezier(.22,.61,.36,1), opacity 0.2s;
 }
-.pane-toggle.closed {
-  left: 0;
-}
+.pane-toggle.closed { left: 0; }
 
 /* -----------------------------------------
-   Graph Pane — slides with transform (no reflow)
+   RIGHT Transactions Pane — mirrors left
+------------------------------------------ */
+.txn-pane {
+  position: absolute;
+  top: 70px;
+  bottom: 0;
+  right: 0;
+  width: var(--pane-width);
+  background: var(--bg-alt);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border-left: 1px solid rgba(255,255,255,0.08);
+
+  transform: translateX(100%);
+  transition: transform 0.32s cubic-bezier(.22,.61,.36,1);
+  z-index: 90;
+
+  /* ensure font is consistent */
+  font-family: 'OptimusPrinceps', sans-serif;
+}
+.txn-pane.open   { transform: translateX(0); }
+.txn-pane.closed { transform: translateX(100%); }
+
+.txn-pane h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  padding-bottom: 0.35rem;
+}
+
+.txn-empty {
+  color:#aaa;
+  font-size:0.95rem;
+  font-family: 'OptimusPrinceps', sans-serif;
+}
+
+/* RIGHT toggle */
+.txn-toggle {
+  position: fixed;
+  top: calc(70px + 12px);
+  right: var(--pane-width);
+  width: 36px;
+  height: 48px;
+  background: var(--primary);
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 120;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+  transition: right 0.32s cubic-bezier(.22,.61,.36,1), opacity 0.2s;
+}
+.txn-toggle.closed { right: 0; }
+
+/* -----------------------------------------
+   Graph Pane — slides with transforms
 ------------------------------------------ */
 .graph-pane {
   position: absolute;
@@ -156,12 +262,166 @@ html, body { overflow-x: hidden; height: 100%; }
   right: 0;
   background: var(--bg);
 
-  /* smooth slide to the right when pane opens */
   transform: translateX(0);
   transition: transform 0.32s cubic-bezier(.22,.61,.36,1);
 }
+/* push graph when panes open */
 .pane-open  .graph-pane { transform: translateX(var(--pane-width)); }
 .pane-closed .graph-pane { transform: translateX(0); }
+
+/* push back from right when transactions open */
+.txn-open  .graph-pane { transform: translateX(calc(var(--pane-width) * -1)); }
+.txn-closed .graph-pane { }
+
+/* If both open, net shift cancels out */
+.pane-open.txn-open .graph-pane { transform: translateX(0); }
+
+/* -----------------------------------------
+   Transactions table
+------------------------------------------ */
+.txn-table {
+  display: grid;
+  gap: 6px;
+  font-family: 'OptimusPrinceps', sans-serif;
+}
+
+.txn-row {
+  display: grid;
+  grid-template-columns: 1.05fr 1.2fr 1.2fr 0.7fr 0.9fr 0.6fr; /* date, from, to, coin, amount, link */
+  gap: 12px;
+  align-items: center;
+  padding: 0.6rem 0.7rem;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  font-family: 'OptimusPrinceps', sans-serif;
+}
+
+/* prevent wrapping anywhere; use ellipsis */
+.txn-row > div,
+.txn-row a {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.txn-header {
+  background: transparent;
+  border: none;
+  padding: 0 0.2rem 0.25rem 0.2rem;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  border-radius: 0;
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.txn-row .addr,
+.txn-row .coin,
+.txn-row .amt,
+.txn-row .link {
+  font-size: 0.98rem;
+}
+
+.txn-row a {
+  color: #7fd1ff;
+  text-decoration: none;
+  font-family: inherit;
+}
+.txn-row a:hover { text-decoration: underline; }
+
+/* -----------------------------------------
+   Coins created section (right pane)
+------------------------------------------ */
+.creator-coins {
+  padding: 0.6rem 0.7rem;
+  background: rgba(164, 97, 255, 0.08);
+  border: 1px solid rgba(164, 97, 255, 0.25);
+  border-radius: 10px;
+}
+.creator-coins .creator-title {
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+.creator-coins ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.creator-coins li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0; /* enable ellipsis */
+}
+.creator-coins .pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+.creator-coins .pill.alt {
+  background: rgba(255,255,255,0.04);
+}
+.creator-coins .type {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* -----------------------------------------
+   Creator Scanner UI (left pane)
+------------------------------------------ */
+.creator-scan {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+.scan-btn {
+  background: #6f49c8;
+}
+.scan-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.scan-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  font-size: 0.92rem;
+  color: #ddd;
+}
+.scan-status .muted { color: #aaa; }
+
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.checkmark {
+  display: inline-block;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #3ac35a;
+  color: #0b1a10;
+  font-weight: 900;
+  line-height: 18px;
+  text-align: center;
+}
 
 /* -----------------------------------------
    Loading overlay
