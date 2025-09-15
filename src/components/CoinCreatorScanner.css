@@ -1,22 +1,29 @@
-/* Keep everything inside this component consistent and contained */
+/* keep everything consistent inside this component */
 .creator-scan,
 .creator-scan * {
   box-sizing: border-box;
   font-family: 'OptimusPrinceps', sans-serif;
+  text-transform: lowercase;
 }
 
-/* layout row for button + status */
+/* layout */
 .creator-scan {
   display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
+  grid-template-columns: 1fr;
   gap: 10px;
   width: 100%;
 }
 
 /* buttons / status row */
-.scan-btn { background: #6f49c8; }
-.scan-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+.scan-btn.red {
+  background: var(--primary);
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+}
+.scan-btn.red:disabled { opacity: 0.65; cursor: not-allowed; }
 
 .scan-status {
   display: inline-flex;
@@ -28,22 +35,17 @@
 }
 .scan-status .muted { color: #aaa; }
 
-.toggle-results,
-.clear-results {
-  margin-left: 8px;
-  padding: 4px 10px;
+.toggle-results.wide {
+  width: 100%;
+  padding: 0.5rem 0.8rem;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 8px;
+  border-radius: 10px;
   color: #fff;
-  font-size: 0.9rem;
   cursor: pointer;
 }
-.clear-results {
-  background: rgba(255,80,80,0.12);
-  border-color: rgba(255,80,80,0.25);
-}
 
+/* spinner */
 .spinner {
   width: 14px; height: 14px;
   border: 2px solid rgba(255,255,255,0.3);
@@ -54,30 +56,18 @@
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.checkmark {
-  display: inline-block;
-  width: 18px; height: 18px;
-  border-radius: 50%;
-  background: #3ac35a;
-  color: #0b1a10;
-  font-weight: 900;
-  line-height: 18px;
-  text-align: center;
-}
-
 /* ---------- RESULTS PANEL ---------- */
 .scan-results {
-  grid-column: 1 / -1;
-  margin-top: 10px;
+  margin-top: 6px;
   padding: 0.75rem;
   width: 100%;
-  background: rgba(0,0,0,0.25);                  /* unified background */
-  border: 1px solid rgba(255,255,255,0.10);       /* unified border */
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.10);
   border-radius: 10px;
-  /* prevent the whole left pane from growing too tall: */
-  max-height: 360px;                               /* adjust if you want taller */
+  max-height: 360px;
   overflow: auto;
   overscroll-behavior: contain;
+  position: relative;
 }
 
 .results-head {
@@ -90,18 +80,10 @@
   align-items: baseline;
 }
 
-.results-head .title {
-  font-size: 1rem;
-  font-weight: 700;
-  text-transform: lowercase;
-}
-.results-head .meta { font-size: 0.9rem; color: #bbb; }
+.results-head .title { font-size: 1rem; font-weight: 700; }
+.results-head .meta  { font-size: 0.9rem; color: #bbb; }
 
-.no-creators {
-  color: #aaa;
-  font-size: 0.95rem;
-  padding: 6px 2px;
-}
+.no-creators { color: #aaa; font-size: 0.95rem; padding: 6px 2px; }
 
 /* creators list */
 .creators-list { display: grid; gap: 10px; }
@@ -112,7 +94,7 @@
   gap: 10px;
   align-items: start;
   padding: 0.55rem 0.6rem;
-  background: rgba(255,255,255,0.03);            /* single consistent row bg */
+  background: rgba(255,255,255,0.03);
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 10px;
 }
@@ -128,46 +110,55 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  min-width: 0;            /* allow children to shrink for ellipsis */
+  min-width: 0;
 }
 
-/* unified chip look (no more mixed colors) */
+/* unified coin chip with name + type + copy */
 .coin-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 4px 8px;
   border-radius: 8px;
   background: rgba(255,255,255,0.04);
   border: 1px solid rgba(255,255,255,0.12);
   max-width: 100%;
-  min-width: 0;            /* important for ellipsis */
+  min-width: 0;
 }
 
 .pill {
   display: inline-block;
   padding: 2px 10px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.08);   /* same for all pills */
+  background: rgba(255,255,255,0.08);
   border: 1px solid rgba(255,255,255,0.15);
   font-size: 0.9rem;
   white-space: nowrap;
   flex: 0 0 auto;
 }
 
-/* Long coin types never overflow the pane */
-.ctype {
+.coin-chip .ctype {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 0.86rem;
-  opacity: 0.95;
+  color: #fff;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1 1 auto;          /* take remaining space, allow shrink */
-  min-width: 40px;         /* keeps tiny chips readable */
 }
 
-/* subtle & consistent “show more/less” button */
+.coin-chip .copy {
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  cursor: pointer;
+}
+
 .show-more {
   padding: 2px 10px;
   border-radius: 999px;

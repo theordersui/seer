@@ -1,4 +1,3 @@
-// src/components/BubbleMaps.jsx
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { ConnectButton, useCurrentWallet, useWallets } from '@mysten/dapp-kit';
@@ -6,7 +5,7 @@ import CytoscapeComponent from 'react-cytoscapejs';
 import axios from 'axios';
 import {
   FiHome, FiMap, FiShield, FiImage, FiMessageCircle, FiBell,
-  FiChevronLeft, FiChevronRight
+  FiChevronLeft, FiChevronRight, FiArrowRight
 } from 'react-icons/fi';
 import { motion } from 'framer-motion';
 import Logo from '../assets/seer.png';
@@ -17,11 +16,11 @@ import './BubbleMaps.css';
 import CoinCreatorScanner from './CoinCreatorScanner';
 
 /* ========= Helpers / constants ========= */
-const BRAND_RED   = '#c02b2b';
-const ELECTRIC_BLUE = '#00c8ff';           // receives → root/anchors
-const NAME_HIT_YELLOW = '#ffd84d';         // SuiNS nodes
-const NODE_GRAY   = '#888';
-const CREATOR_PURPLE = '#a461ff';          // coin creator nodes
+const BRAND_RED        = '#c02b2b';
+const ELECTRIC_BLUE    = '#00c8ff';
+const NAME_HIT_YELLOW  = '#ffd84d';
+const NODE_GRAY        = '#888';
+const CREATOR_PURPLE   = '#a461ff';
 const DEFAULT_DECIMALS = 9;
 
 /** Exact type overrides (most precise) */
@@ -95,49 +94,54 @@ export default function BubbleMaps() {
   // Start BLANK; no auto-run
   const [wallet, setWallet] = useState('');
   const [rawTx, setRawTx] = useState([]);
-  const [coinOptions, setCoinOptions] = useState([]); // for global filter + per-coin rules
+  const [coinOptions, setCoinOptions] = useState([]); // derived from txs
   const [timeRange, setTimeRange] = useState({ min: '', max: '' });
 
-  // Global coin + date filters
-  const [filters, setFilters] = useState({ coin: '', start: '', end: '' });
+  // date filters (coin filters handled by per-coin rules)
+  const [filters, setFilters] = useState({ start: '', end: '' });
 
-  // Per-coin minimums
-  const [draftRules, setDraftRules] = useState([]);     // [{ coin: 'sui', min: 10 }]
-  const [perCoinRules, setPerCoinRules] = useState([]); // [{ coin: 'sui', min: 10 }]
+  // Per-coin minimums (draft UI → committed rules)
+  // Rule: { coin: 'sui', min: 10, only: false }
+  const [draftRules, setDraftRules] = useState([]);
+  const [perCoinRules, setPerCoinRules] = useState([]);
 
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [paneOpen, setPaneOpen] = useState(true);
 
-  /** RIGHT: transactions pane controls */
-  const [txnPaneOpen, setTxnPaneOpen] = useState(true);
+  /** panes */
+  const [paneOpen, setPaneOpen] = useState(true);       // left starts open
+  const [txnPaneOpen, setTxnPaneOpen] = useState(false); // right starts closed
+  const [toolsOpen, setToolsOpen] = useState(false);     // extra tools collapsed by default
+
   const [selectedNodeId, setSelectedNodeId] = useState(null);
-  const [selectedNodeTx, setSelectedNodeTx] = useState([]); // filtered, sorted
+  const [selectedNodeTx, setSelectedNodeTx] = useState([]);
 
-  /** fixed root address (Node A) */
+  /** layout */
   const [rootId, setRootId] = useState(null);
-  /** bump count per clicked node; each expand moves it farther from the root */
-  const [nodeBumps, setNodeBumps] = useState({}); // { [nodeId]: number }
-  /** expansion groups */
-  const [expansionGroups, setExpansionGroups] = useState({}); // { [anchorId]: string[] }
+  const [nodeBumps, setNodeBumps] = useState({});
+  const [expansionGroups, setExpansionGroups] = useState({});
 
   /** SuiNS cache: undefined=unknown(fetch), null=miss, string=hit */
   const [nameByAddress, setNameByAddress] = useState({});
 
-  /** Coin creators results */
-  const [creatorSet, setCreatorSet] = useState({});         // { addrLower: true }
-  const [coinsByCreator, setCoinsByCreator] = useState({}); // { addrLower: [{symbol,name,coinType}] }
+  /** coin creators */
+  const [creatorSet, setCreatorSet] = useState({});
+  const [coinsByCreator, setCoinsByCreator] = useState({});
 
-  /** in-flight guard & queue for SuiNS */
+  /** SuiNS queue/batch */
   const inflight = useRef(new Set());
   const resolveQueue = useRef([]);
   const queueRunning = useRef(false);
+  const batchResultsRef = useRef({});
+  const resolvingRef = useRef(false);
 
   const cyRef = useRef(null);
-
-  // Tracks the last automatically-applied range so we only auto-update if user hasn't customized
   const autoRangeRef = useRef({ start: '', end: '' });
+  const [cyMountKey, setCyMountKey] = useState(1); // used when we truly need a fresh mount
+
+  // NEW: snapshot of positions before first rule is applied (to restore when rules cleared)
+  const preFilterPositionsRef = useRef(null);
 
   useEffect(() => { if (!isConnected) navigate('/'); }, [isConnected, navigate]);
 
@@ -151,7 +155,8 @@ export default function BubbleMaps() {
   ]), []);
 
   /* -------- current positions from Cytoscape -------- */
-  const snapshotPositions = useCallback(() => {
+  const snapshotPositions = useCallback((reset = false) => {
+    if (reset) return {};
     const map = {};
     const cy = cyRef.current;
     if (!cy) return map;
@@ -159,9 +164,9 @@ export default function BubbleMaps() {
     return map;
   }, []);
 
-  /* -------- tx filtering (date + coin/min rules) -------- */
+  /* -------- tx filtering (date + per-coin rules incl. "only") -------- */
   const txPassesFilters = useCallback((t, opts, rules) => {
-    const { coin, start, end } = opts;
+    const { start, end } = opts;
 
     const ts = new Date(t.timestampMs);
     if (start) {
@@ -174,139 +179,147 @@ export default function BubbleMaps() {
     }
 
     const symLower = coinTypeToSymbolLower(t.coin);
-    const humanAmt = t.amount / Math.pow(10, getDecimals(t.coin));
+    const dec = getDecimals(t.coin);
+    const humanAmt = t.amount / Math.pow(10, dec);
 
-    if (rules && rules.length) {
-      const rule = rules.find(r => r.coin === symLower);
-      if (rule) return humanAmt >= Number(rule.min || 0);
-      return !coin || symLower === coin;
-    } else {
-      if (coin && symLower !== coin) return false;
-      return true;
+    const onlyCoins = new Set((rules || []).filter(r => r.only).map(r => r.coin));
+    if (onlyCoins.size > 0 && !onlyCoins.has(symLower)) return false;
+
+    const rule = (rules || []).find(r => r.coin === symLower);
+    if (rule) {
+      return humanAmt >= Number(rule.min || 0);
     }
+    return true;
   }, []);
 
   /* -------- build elements from tx list -------- */
-  const buildElements = useCallback((txs, mainAddress, expandSpec = null) => {
-    const edgeCoinAgg = new Map(); // key: `${from}|${to}|${coinType}`
-    const nodes = new Map();
+  const buildElements = useCallback(
+    (txs, mainAddress, expandSpec = null, { resetLayout = false, basePositions = null } = {}) => {
+      const edgeCoinAgg = new Map();
+      const nodes = new Map();
 
-    const shortAddr = (addr='') => {
-      const s = String(addr);
-      if (s.length <= 7) return s;
-      return `${s.slice(0,3)}..${s.slice(-4)}`;
-    };
-    const truncSuiName = (name='') => `${String(name).slice(0,9)}..`;
-
-    const nodeDatum = (addr, baseColor) => {
-      const hit = nameByAddress[addr];
-      const hasName = typeof hit === 'string' && hit.length > 0;
-
-      const isCreator = !!creatorSet[String(addr).toLowerCase()];
-      const color = isCreator ? CREATOR_PURPLE : (hasName ? NAME_HIT_YELLOW : baseColor);
-      const textColor = isCreator ? '#000' : (hasName ? '#000' : '#fff');
-
-      return {
-        id: addr,
-        label: hasName ? truncSuiName(hit) : shortAddr(addr),
-        color,
-        textColor
+      const shortAddr = (addr='') => {
+        const s = String(addr);
+        if (s.length <= 7) return s;
+        return `${s.slice(0,3)}..${s.slice(-4)}`;
       };
-    };
+      const truncSuiName = (name='') => `${String(name).slice(0,9)}..`;
 
-    if (mainAddress) nodes.set(mainAddress, nodeDatum(mainAddress, BRAND_RED));
+      const nodeDatum = (addr, baseColor) => {
+        const hit = nameByAddress[addr];
+        const hasName = typeof hit === 'string' && hit.length > 0;
 
-    for (const t of txs) {
-      const src = t.from;
-      const tgt = t.to;
-      const coinType = t.coin;
-      const decimals = getDecimals(coinType);
-      const converted = t.amount / Math.pow(10, decimals);
+        const isCreator = !!creatorSet[String(addr).toLowerCase()];
+        const color = isCreator ? CREATOR_PURPLE : (hasName ? NAME_HIT_YELLOW : baseColor);
+        const textColor = isCreator ? '#000' : (hasName ? '#000' : '#fff');
 
-      if (!nodes.has(src)) nodes.set(src, nodeDatum(src, NODE_GRAY));
-      if (!nodes.has(tgt)) nodes.set(tgt, nodeDatum(tgt, NODE_GRAY));
+        return {
+          id: addr,
+          label: hasName ? truncSuiName(hit) : shortAddr(addr),
+          color,
+          textColor
+        };
+      };
 
-      const key = `${src}|${tgt}|${coinType}`;
-      if (!edgeCoinAgg.has(key)) {
-        edgeCoinAgg.set(key, {
-          source: src, target: tgt,
-          count: 0, total: 0,
-          coinType, symLower: coinTypeToSymbolLower(coinType)
-        });
+      if (mainAddress) nodes.set(mainAddress, nodeDatum(mainAddress, BRAND_RED));
+
+      for (const t of txs) {
+        const src = t.from;
+        const tgt = t.to;
+        const coinType = t.coin;
+        const decimals = getDecimals(coinType);
+        const converted = t.amount / Math.pow(10, decimals);
+
+        if (!nodes.has(src)) nodes.set(src, nodeDatum(src, NODE_GRAY));
+        if (!nodes.has(tgt)) nodes.set(tgt, nodeDatum(tgt, NODE_GRAY));
+
+        const key = `${src}|${tgt}|${coinType}`;
+        if (!edgeCoinAgg.has(key)) {
+          edgeCoinAgg.set(key, {
+            source: src, target: tgt,
+            count: 0, total: 0,
+            coinType, symLower: coinTypeToSymbolLower(coinType)
+          });
+        }
+        const e = edgeCoinAgg.get(key);
+        e.count += 1;
+        e.total += converted;
       }
-      const e = edgeCoinAgg.get(key);
-      e.count += 1;
-      e.total += converted;
-    }
 
-    const currentPos = snapshotPositions();
-    const nodeArr = Array.from(nodes.values());
-    const posOut = { ...currentPos };
+      const currentPos = resetLayout ? {} : (basePositions || snapshotPositions());
+      const nodeArr = Array.from(nodes.values());
+      const posOut = { ...currentPos };
 
-    if (Object.keys(currentPos).length === 0) {
-      const others = nodeArr.map(n => n.id).filter(id => id !== mainAddress);
-      const { positions: placed } = ringNoOverlap({ x:0, y:0 }, others, { minRadius: 320, gap: NODE_GAP });
-      if (mainAddress) posOut[mainAddress] = { x:0, y:0 };
-      Object.assign(posOut, placed);
-    }
-
-    if (expandSpec && expandSpec.anchorId && expandSpec.rootId && Array.isArray(expandSpec.newIds)) {
-      const anchorId = expandSpec.anchorId;
-      const rootId   = expandSpec.rootId;
-      const bumpLvl  = expandSpec.bumpLevel || 1;
-      const rootPos  = posOut[rootId]   || { x: 0, y: 0 };
-      const oldPos   = posOut[anchorId] || { x: 0, y: 0 };
-
-      let dx = oldPos.x - rootPos.x;
-      let dy = oldPos.y - rootPos.y;
-      const oldDist = Math.hypot(dx, dy) || 1;
-      dx /= oldDist; dy /= oldDist;
-
-      const newDist = oldDist + bumpLvl * EDGE_GROWTH_PER_CLICK;
-      const newCenter = { x: rootPos.x + dx * newDist, y: rootPos.y + dy * newDist };
-
-      posOut[anchorId] = newCenter;
-
-      if (expandSpec.newIds.length) {
-        const { positions: placed } = ringNoOverlap(newCenter, expandSpec.newIds, { minRadius: 20, gap: NODE_GAP });
+      if (Object.keys(currentPos).length === 0) {
+        const others = nodeArr.map(n => n.id).filter(id => id !== mainAddress);
+        const { positions: placed } = ringNoOverlap({ x:0, y:0 }, others, { minRadius: 320, gap: NODE_GAP });
+        if (mainAddress) posOut[mainAddress] = { x:0, y:0 };
         Object.assign(posOut, placed);
       }
-    }
 
-    const receiveTargetSetLower = new Set(
-      [
-        ...(mainAddress ? [String(mainAddress).toLowerCase()] : []),
-        ...Object.keys(expansionGroups || {}).map(id => String(id).toLowerCase()),
-      ]
-    );
+      if (!resetLayout && expandSpec && expandSpec.anchorId && expandSpec.rootId && Array.isArray(expandSpec.newIds)) {
+        const anchorId = expandSpec.anchorId;
+        const rootId   = expandSpec.rootId;
+        const bumpLvl  = expandSpec.bumpLevel || 1;
+        const rootPos  = posOut[rootId]   || { x: 0, y: 0 };
+        const oldPos   = posOut[anchorId] || { x: 0, y: 0 };
 
-    const nodeEls = nodeArr.map(n => ({ data: n, position: posOut[n.id] || { x: 0, y: 0 } }));
+        let dx = oldPos.x - rootPos.x;
+        let dy = oldPos.y - rootPos.y;
+        const oldDist = Math.hypot(dx, dy) || 1;
+        dx /= oldDist; dy /= oldDist;
 
-    const edgeEls = [];
-    for (const [edgeKey, e] of edgeCoinAgg.entries()) {
-      const label = `${e.count} tx${e.count > 1 ? 's' : ''}: ${fmtInt(e.total)} ${e.symLower}`;
-      const tgtLower = String(e.target || '').toLowerCase();
-      const isReceiveToAnyAnchor = receiveTargetSetLower.has(tgtLower);
-      edgeEls.push({
-        data: {
-          id: edgeKey,
-          source: e.source,
-          target: e.target,
-          label,
-          color: isReceiveToAnyAnchor ? ELECTRIC_BLUE : BRAND_RED,
-          width: 2
+        const newDist = oldDist + bumpLvl * EDGE_GROWTH_PER_CLICK;
+        const newCenter = { x: rootPos.x + dx * newDist, y: rootPos.y + dy * newDist };
+
+        posOut[anchorId] = newCenter;
+
+        if (expandSpec.newIds.length) {
+          const { positions: placed } = ringNoOverlap(newCenter, expandSpec.newIds, { minRadius: 20, gap: NODE_GAP });
+          Object.assign(posOut, placed);
         }
-      });
-    }
+      }
 
-    return [...nodeEls, ...edgeEls];
-  }, [snapshotPositions, nameByAddress, creatorSet, expansionGroups]);
+      const receiveTargetSetLower = new Set(
+        [
+          ...(mainAddress ? [String(mainAddress).toLowerCase()] : []),
+          ...Object.keys(expansionGroups || {}).map(id => String(id).toLowerCase()),
+        ]
+      );
 
-  const applyFilters = useCallback((txs, opts, rules) => {
-    const filtered = txs.filter(t => txPassesFilters(t, opts, rules));
-    const els = buildElements(filtered, rootId || wallet, null);
-    setElements(els);
-  }, [buildElements, txPassesFilters, wallet, rootId]);
+      const nodeEls = nodeArr.map(n => ({ data: n, position: posOut[n.id] || { x: 0, y: 0 } }));
+
+      const edgeEls = [];
+      for (const [edgeKey, e] of edgeCoinAgg.entries()) {
+        const label = `${e.count} tx${e.count > 1 ? 's' : ''}: ${fmtInt(e.total)} ${e.symLower}`;
+        const tgtLower = String(e.target || '').toLowerCase();
+        const isReceiveToAnyAnchor = receiveTargetSetLower.has(tgtLower);
+        edgeEls.push({
+          data: {
+            id: edgeKey,
+            source: e.source,
+            target: e.target,
+            label,
+            color: isReceiveToAnyAnchor ? ELECTRIC_BLUE : BRAND_RED,
+            width: 2
+          }
+        });
+      }
+
+      return [...nodeEls, ...edgeEls];
+    },
+    [snapshotPositions, nameByAddress, creatorSet, expansionGroups]
+  );
+
+  const applyFilters = useCallback(
+    (txs, { start, end }, rules, { resetLayout = false, basePositions = null } = {}) => {
+      const filtered = txs.filter(t => txPassesFilters(t, { start, end }, rules));
+      const els = buildElements(filtered, rootId || wallet, null, { resetLayout, basePositions });
+      setElements(els);
+      if (resetLayout) setCyMountKey(k => k + 1);
+    },
+    [buildElements, txPassesFilters, wallet, rootId]
+  );
 
   /** Compute the auto range over given txs (pads ±1s) */
   const computeRangeFor = useCallback((txs) => {
@@ -364,7 +377,6 @@ export default function BubbleMaps() {
 
       // AUTO RANGE every fetch; expand filters if user hasn't customized
       const { startStr, endStr } = computeRangeFor(merged);
-
       if (startStr && endStr) { setTimeRange({ min: startStr, max: endStr }); }
 
       const { start: autoStart, end: autoEnd } = autoRangeRef.current;
@@ -381,12 +393,10 @@ export default function BubbleMaps() {
         }
       }
 
-      const opts = {
-        coin: (filters.coin || '').toLowerCase(),
+      const filtered = merged.filter(t => txPassesFilters(t, {
         start: (replace || !userHasCustom) ? startStr : filters.start,
         end:   (replace || !userHasCustom) ? endStr   : filters.end
-      };
-      const filtered = merged.filter(t => txPassesFilters(t, opts, perCoinRules));
+      }, perCoinRules));
 
       let expandSpec = null;
       if (!replace && anchorIdForNew) {
@@ -436,7 +446,7 @@ export default function BubbleMaps() {
   /* -------- re-apply when COMMITTED rules/filters change -------- */
   useEffect(() => {
     if (rawTx.length) {
-      applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, perCoinRules);
+      applyFilters(rawTx, { start: filters.start, end: filters.end }, perCoinRules);
     } else {
       setElements([]);
     }
@@ -445,7 +455,7 @@ export default function BubbleMaps() {
   /* -------- RIGHT PANE: derive tx list for selected node (sorted desc) -------- */
   const computeNodeTx = useCallback((nodeId) => {
     if (!nodeId) return [];
-    const opts = { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end };
+    const opts = { start: filters.start, end: filters.end };
     return rawTx
       .filter(t => txPassesFilters(t, opts, perCoinRules))
       .filter(t =>
@@ -459,30 +469,34 @@ export default function BubbleMaps() {
     setSelectedNodeTx(computeNodeTx(selectedNodeId));
   }, [selectedNodeId, rawTx, filters, perCoinRules, computeNodeTx]);
 
-  /* -------- Name resolution queue (rate-limited, non-blocking) -------- */
+  /* -------- SuiNS: queue new node ids -------- */
   const enqueueAddresses = useCallback((addresses) => {
     const unique = Array.from(new Set(addresses));
     unique.forEach(a => {
-      if (typeof nameByAddress[a] !== 'undefined') return;
-      if (inflight.current.has(a)) return;
-      if (resolveQueue.current.includes(a)) return;
+      if (typeof nameByAddress[a] !== 'undefined') return; // known (hit/miss)
+      if (inflight.current.has(a)) return;                 // already resolving
+      if (resolveQueue.current.includes(a)) return;        // already queued
       resolveQueue.current.push(a);
     });
-    if (!queueRunning.current) runQueue();
+    if (!queueRunning.current) runQueue(); // kick off
   }, [nameByAddress]);
 
   const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
+  // BATCHED runQueue: resolves all queued names, then commits once
   const runQueue = useCallback(async () => {
     if (queueRunning.current) return;
     queueRunning.current = true;
+    resolvingRef.current = true;
 
     try {
+      batchResultsRef.current = {};
+
       while (resolveQueue.current.length) {
         const addr = resolveQueue.current.shift();
         if (!addr) break;
 
-        if (typeof nameByAddress[addr] !== 'undefined') continue;
+        if (typeof nameByAddress[addr] !== 'undefined') continue; // learned meanwhile
         if (inflight.current.has(addr)) continue;
         inflight.current.add(addr);
 
@@ -504,24 +518,28 @@ export default function BubbleMaps() {
           const extractName = (entry) => (entry && typeof entry === 'object') ? (entry.name || '') : (entry || '');
           const label = extractName(names[0]) || '';
 
-          setNameByAddress(prev => {
-            const nextVal = label ? label : null; // null marks miss (never refetch)
-            if (prev[addr] === nextVal) return prev;
-            return { ...prev, [addr]: nextVal };
-          });
+          // buffer, don't set state
+          batchResultsRef.current[addr] = label ? label : null;
         } catch {
-          setNameByAddress(prev => {
-            if (prev[addr] === null) return prev;
-            return { ...prev, [addr]: null };
-          });
+          batchResultsRef.current[addr] = null; // mark miss to avoid endless retries
         } finally {
           inflight.current.delete(addr);
         }
 
         await sleep(SLEEP_MS);
       }
+
+      // commit all at once
+      const batch = batchResultsRef.current;
+      if (Object.keys(batch).length) {
+        setNameByAddress(prev => ({ ...prev, ...batch }));
+      }
     } finally {
+      batchResultsRef.current = {};
+      resolvingRef.current = false;
       queueRunning.current = false;
+
+      // if new addresses arrived mid-flight, run again
       if (resolveQueue.current.length) runQueue();
     }
   }, [nameByAddress]);
@@ -534,10 +552,10 @@ export default function BubbleMaps() {
     if (nodeIds.length) enqueueAddresses(nodeIds);
   }, [elements, enqueueAddresses]);
 
-  // When name cache updates, rebuild graph and refresh right pane labels
+  // When name cache updates, rebuild graph and refresh right pane labels — will fire once per batch
   useEffect(() => {
     if (!rawTx.length) return;
-    applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, perCoinRules);
+    applyFilters(rawTx, { start: filters.start, end: filters.end }, perCoinRules);
     setSelectedNodeTx(computeNodeTx(selectedNodeId));
   }, [nameByAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -551,7 +569,20 @@ export default function BubbleMaps() {
     return () => clearTimeout(id);
   }, [paneOpen, txnPaneOpen]);
 
-  /* -------- node interactions: click vs double-click (no interference) -------- */
+  /* -------- focus/flash a node by address -------- */
+  const focusAddress = useCallback((addrLower) => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const n = cy.$id(addrLower);
+    if (!n || n.empty()) return;
+    try {
+      cy.animate({ center: { eles: n } }, { duration: 300 });
+      n.addClass('pulse');
+      setTimeout(() => { try { n.removeClass('pulse'); } catch {} }, 1200);
+    } catch {}
+  }, []);
+
+  /* -------- node interactions: click vs double-click -------- */
   const bindCyHandlers = useCallback((cy) => {
     if (!cy) return;
     cy.off('tap'); cy.off('grab'); cy.off('drag'); cy.off('free');
@@ -565,7 +596,7 @@ export default function BubbleMaps() {
       const now = Date.now();
 
       if (click.timer && click.lastId === addr && (now - click.lastTs) <= click.threshold) {
-        // it's a double-click → cancel pending single click, EXPAND ONLY
+        // double-click → expand only
         clearTimeout(click.timer);
         click.timer = null;
         click.lastId = null;
@@ -575,19 +606,18 @@ export default function BubbleMaps() {
         return;
       }
 
-      // schedule single-click behavior
+      // single-click → open right pane
       click.lastId = addr;
       click.lastTs = now;
       if (click.timer) { clearTimeout(click.timer); }
       click.timer = setTimeout(() => {
-        // Single click → open right pane & show txs for this node
         setSelectedNodeId(addr);
         if (!txnPaneOpen) setTxnPaneOpen(true);
         click.timer = null;
       }, click.threshold);
     });
 
-    // Group-drag behavior unchanged
+    // group-drag behavior
     const dragState = { anchorId: null, last: null, followers: [] };
 
     cy.on('grab', 'node', (evt) => {
@@ -625,8 +655,8 @@ export default function BubbleMaps() {
     });
   }, [fetchGraphFor, expansionGroups, txnPaneOpen]);
 
-  /* -------- UI helpers for DRAFT rules -------- */
-  const addDraftRule = () => setDraftRules(prev => [...prev, { coin: '', min: 0 }]);
+  /* -------- UI helpers for DRAFT rules (with structure restore) -------- */
+  const addDraftRule = () => setDraftRules(prev => [...prev, { coin: '', min: 0, only: false }]);
   const updateDraftRule = (i, patch) =>
     setDraftRules(prev => prev.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
 
@@ -638,10 +668,23 @@ export default function BubbleMaps() {
       if (toRemove?.coin) {
         const coin = String(toRemove.coin).toLowerCase();
         const updated = perCoinRules.filter(r => r.coin !== coin);
-        setPerCoinRules(updated);
-        if (rawTx.length) {
-          applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, updated);
-          setSelectedNodeTx(computeNodeTx(selectedNodeId));
+
+        // if this was the last rule, restore pre-filter positions
+        if (updated.length === 0) {
+          const base = preFilterPositionsRef.current || snapshotPositions();
+          setPerCoinRules(updated);
+          if (rawTx.length) {
+            applyFilters(rawTx, { start: filters.start, end: filters.end }, updated, { basePositions: base });
+            setSelectedNodeTx(computeNodeTx(selectedNodeId));
+          }
+          // clear the snapshot so future sessions can capture fresh
+          preFilterPositionsRef.current = null;
+        } else {
+          setPerCoinRules(updated);
+          if (rawTx.length) {
+            applyFilters(rawTx, { start: filters.start, end: filters.end }, updated);
+            setSelectedNodeTx(computeNodeTx(selectedNodeId));
+          }
         }
       }
       return next;
@@ -651,10 +694,30 @@ export default function BubbleMaps() {
   const applyDraftRules = () => {
     const normalized = draftRules
       .filter(r => r.coin)
-      .map(r => ({ coin: r.coin.toLowerCase(), min: Math.max(0, Number(r.min || 0)) }));
+      .map(r => ({
+        coin: r.coin.toLowerCase(),
+        min: Math.max(0, Number(r.min || 0)),
+        only: !!r.only
+      }));
+
+    // capture positions only when going from zero → some rules
+    if (perCoinRules.length === 0 && normalized.length > 0) {
+      preFilterPositionsRef.current = snapshotPositions();
+    }
+
     setPerCoinRules(normalized);
     if (rawTx.length) {
-      applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, normalized);
+      applyFilters(rawTx, { start: filters.start, end: filters.end }, normalized);
+      setSelectedNodeTx(computeNodeTx(selectedNodeId));
+    }
+  };
+
+  /** toggle "show only this coin" on committed rules */
+  const toggleOnlyCoin = (coin, checked) => {
+    const updated = perCoinRules.map(r => r.coin === coin ? { ...r, only: !!checked } : r);
+    setPerCoinRules(updated);
+    if (rawTx.length) {
+      applyFilters(rawTx, { start: filters.start, end: filters.end }, updated);
       setSelectedNodeTx(computeNodeTx(selectedNodeId));
     }
   };
@@ -683,7 +746,6 @@ export default function BubbleMaps() {
   const formatAmountOnly = (coinType, rawAmount) => {
     const dec = getDecimals(coinType);
     const val = Number(rawAmount) / Math.pow(10, dec);
-    // whole numbers only
     return Math.round(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
   };
 
@@ -691,19 +753,27 @@ export default function BubbleMaps() {
   const nodeIds = useMemo(() => {
     return elements
       .filter(el => el.data && el.data.id && !el.data.source)
-      .map(el => el.data.id);
+      .map(el => el.data.id.toLowerCase());
   }, [elements]);
 
   /** Scanner completion handler */
   const handleCreatorsDone = useCallback((result) => {
-    // result: { creatorSet: {addrLower:true}, coinsByCreator: {addrLower:[{symbol,name,coinType}]}}
     setCreatorSet(result.creatorSet || {});
     setCoinsByCreator(result.coinsByCreator || {});
     if (rawTx.length) {
-      // rebuild graph to recolor creator nodes
-      applyFilters(rawTx, { coin: (filters.coin || '').toLowerCase(), start: filters.start, end: filters.end }, perCoinRules);
+      applyFilters(rawTx, { start: filters.start, end: filters.end }, perCoinRules);
     }
   }, [applyFilters, rawTx, filters, perCoinRules]);
+
+  /** click helper for txn row arrow: highlight the other party of the tx */
+  const highlightTxnPeer = (t) => {
+    if (!selectedNodeId) return;
+    const sel = String(selectedNodeId).toLowerCase();
+    const from = String(t.from).toLowerCase();
+    const to = String(t.to).toLowerCase();
+    const other = (sel === from) ? to : from;
+    focusAddress(other);
+  };
 
   return (
     <div className={`bubblemaps-wrapper ${paneOpen ? 'pane-open' : 'pane-closed'} ${txnPaneOpen ? 'txn-open' : 'txn-closed'}`}>
@@ -744,15 +814,7 @@ export default function BubbleMaps() {
           <input type="text" value={wallet} onChange={e => setWallet(e.target.value.trim())} placeholder="0x..." />
         </label>
 
-        {/* Global coin filter */}
-        <label>coin (global)
-          <select value={filters.coin} onChange={e => setFilters(f => ({ ...f, coin: e.target.value.toLowerCase() }))}>
-            <option value="">all</option>
-            {coinOptions.map(sym => (<option key={sym} value={sym}>{sym}</option>))}
-          </select>
-        </label>
-
-        {/* Legend */}
+        {/* Legend directly under Address */}
         <div className="legend">
           <div className="legend-title">legend</div>
           <div className="legend-items">
@@ -766,7 +828,7 @@ export default function BubbleMaps() {
             </div>
             <div className="legend-item">
               <span className="swatch circle named" />
-              <span>named node (SuiNS)</span>
+              <span>named node (suins)</span>
             </div>
             <div className="legend-item">
               <span className="swatch circle other" />
@@ -783,47 +845,60 @@ export default function BubbleMaps() {
           </div>
         </div>
 
-        {/* Coin Creator Scanner (runs, then applies) */}
-        <CoinCreatorScanner
-          addresses={nodeIds}
-          rpcUrl={SHINAMI_ENDPOINT}
-          onDone={handleCreatorsDone}
-        />
-
-        {/* Per-coin minimums */}
-        <div style={{ borderTop:'1px solid rgba(255,255,255,0.12)', paddingTop:'0.6rem' }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.35rem' }}>
-            <h2 style={{ margin:0, fontSize:'1.0rem' }}>per-coin minimums</h2>
-            <button className="apply-btn" style={{ padding: '0.35rem 0.6rem', background:'#444' }} onClick={addDraftRule}>+ add</button>
+        {/* Per-coin minimums (restyled) */}
+        <div className="pcm-wrap">
+          <div className="pcm-head">
+            <h2>per-coin minimums</h2>
+            <button className="apply-btn mini" onClick={addDraftRule}>+ add</button>
           </div>
 
           {draftRules.length === 0 && (
-            <div style={{ fontSize:'0.85rem', color:'#aaa', marginBottom:'0.35rem' }}>
+            <div className="pcm-empty">
               add one or more coin rules; they won’t affect the graph until you hit <em>apply</em>.
             </div>
           )}
 
           {draftRules.map((row, i) => (
-            <div key={i} style={{ marginBottom:'0.75rem', padding:'0.5rem', background:'rgba(255,255,255,0.04)', borderRadius:8 }}>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.5rem', alignItems:'end' }}>
-                <label>coin
-                  <select value={row.coin} onChange={e => setDraftRules(prev => prev.map((rw, idx) => idx === i ? { ...rw, coin: e.target.value.toLowerCase() } : rw))}>
+            <div key={i} className="rule-card">
+              <div className="rule-row">
+                <label className="compact">coin
+                  <select
+                    value={row.coin}
+                    onChange={e => updateDraftRule(i, { coin: e.target.value.toLowerCase() })}
+                  >
                     <option value="">select…</option>
                     {coinOptions.map(sym => (<option key={sym} value={sym}>{sym}</option>))}
                   </select>
                 </label>
-                <label>min amount
-                  <input type="number" min="0" step="1" value={row.min} onChange={e => setDraftRules(prev => prev.map((rw, idx) => idx === i ? { ...rw, min: e.target.value } : rw))}/>
+
+                <label className="compact">min
+                  <input
+                    type="number" min="0" step="1"
+                    value={row.min}
+                    onChange={e => updateDraftRule(i, { min: e.target.value })}
+                  />
+                </label>
+
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!row.only}
+                    onChange={e => updateDraftRule(i, { only: e.target.checked })}
+                  />
+                  <span className="slider" />
+                  <span className="switch-label">only</span>
                 </label>
               </div>
-              <div style={{ display:'flex', gap:'0.5rem', marginTop:'0.5rem' }}>
-                <button className="apply-btn" style={{ background:'#666' }} onClick={applyDraftRules}>apply</button>
-                <button className="apply-btn" style={{ background:'#663' }} onClick={() => removeDraftRule(i)}>remove</button>
+
+              <div className="rule-actions">
+                <button className="apply-btn" onClick={applyDraftRules}>apply</button>
+                <button className="remove-btn" onClick={() => removeDraftRule(i)}>remove</button>
               </div>
             </div>
           ))}
         </div>
 
+        {/* dates */}
         <label>from
           <input
             type="datetime-local"
@@ -846,9 +921,35 @@ export default function BubbleMaps() {
           />
         </label>
 
+        {/* extra tools (collapsible) */}
+        <div className="extra-tools">
+          <button className="extra-toggle" onClick={() => setToolsOpen(o => !o)}>
+            <span>{toolsOpen ? 'hide' : 'show'} extra tools</span>
+            <span className={`caret ${toolsOpen ? 'open' : ''}`} />
+          </button>
+
+          {toolsOpen && (
+            <div className="extra-body">
+              <div className="extra-block">
+                <div className="extra-title">search for coin creators</div>
+                <CoinCreatorScanner
+                  addresses={nodeIds}
+                  rpcUrl={SHINAMI_ENDPOINT}
+                  onDone={handleCreatorsDone}
+                  onFocusAddress={focusAddress}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
         <button
           className="apply-btn"
-          onClick={() => { setElements([]); fetchGraphFor(wallet, { replace: true }); }}
+          onClick={() => {
+            setElements([]);
+            fetchGraphFor(wallet, { replace: true });
+            setPaneOpen(false); // collapse left pane after apply
+          }}
           disabled={loading}
           title={!wallet ? 'enter an address first' : 'apply filters & load'}
         >
@@ -881,7 +982,20 @@ export default function BubbleMaps() {
                 <li key={`${c.coinType || c.symbol || c.name || 'coin'}-${idx}`}>
                   {c.symbol ? <span className="pill">{c.symbol}</span> : null}
                   {c.name && (!c.symbol || c.name.toLowerCase() !== c.symbol.toLowerCase()) ? <span className="pill alt">{c.name}</span> : null}
-                  {c.coinType ? <span className="type">{c.coinType}</span> : null}
+                  {c.coinType ? (
+                    <span className="type clickable" title="click to highlight creator node" onClick={() => focusAddress(String(selectedNodeId).toLowerCase())}>
+                      {c.coinType}
+                    </span>
+                  ) : null}
+                  {c.coinType ? (
+                    <button
+                      className="copy-btn"
+                      onClick={async () => { try { await navigator.clipboard.writeText(c.coinType); } catch {} }}
+                      title="copy coin type"
+                    >
+                      copy
+                    </button>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -899,6 +1013,7 @@ export default function BubbleMaps() {
         {selectedNodeId && selectedNodeTx.length > 0 && (
           <div className="txn-table">
             <div className="txn-row txn-header">
+              <div className="go-col"></div>
               <div>date</div>
               <div>from</div>
               <div>to</div>
@@ -908,12 +1023,21 @@ export default function BubbleMaps() {
             </div>
             {selectedNodeTx.map(t => (
               <div className="txn-row" key={t.digest || `${t.from}-${t.to}-${t.timestampMs}`}>
+                <div className="go-col">
+                  <button
+                    className="go-btn"
+                    title="highlight counterparty"
+                    onClick={() => highlightTxnPeer(t)}
+                  >
+                    <FiArrowRight />
+                  </button>
+                </div>
                 <div>{formatDateOnly(t.timestampMs)}</div>
                 <div className="addr" title={fullLabel(t.from)}>{nameOrShort(t.from)}</div>
                 <div className="addr" title={fullLabel(t.to)}>{nameOrShort(t.to)}</div>
                 <div className="coin">{symbolOf(t.coin)}</div>
                 <div className="amt">{formatAmountOnly(t.coin, t.amount)}</div>
-                <div className="link"><a href={digestLink(t.digest)} target="_blank" rel="noreferrer">Link</a></div>
+                <div className="link"><a href={digestLink(t.digest)} target="_blank" rel="noreferrer">link</a></div>
               </div>
             ))}
           </div>
@@ -933,6 +1057,7 @@ export default function BubbleMaps() {
       {/* graph */}
       <main className="graph-pane">
         <CytoscapeComponent
+          key={cyMountKey}
           elements={elements}
           style={{ width: '100%', height: '100%' }}
           cy={cy => { cyRef.current = cy; bindCyHandlers(cy); }}
@@ -953,7 +1078,18 @@ export default function BubbleMaps() {
                 shape: 'ellipse',
                 'border-width': NODE_BORDER,
                 'border-color': '#111',
-                'overlay-opacity': 0
+                'overlay-opacity': 0,
+                'transition-property': 'background-color, border-color, border-width',
+                'transition-duration': '200ms'
+              }
+            },
+            {
+              selector: 'node.pulse',
+              style: {
+                'border-color': ELECTRIC_BLUE,
+                'border-width': 6,
+                'overlay-opacity': 0.15,
+                'overlay-color': ELECTRIC_BLUE
               }
             },
             {
@@ -966,7 +1102,7 @@ export default function BubbleMaps() {
                 'target-arrow-shape': 'triangle',
                 width: 'data(width)',
                 label: 'data(label)',
-                'font-family': 'OptimusPrinceps', // keep consistent
+                'font-family': 'OptimusPrinceps',
                 'font-size': '10px',
                 color: '#fff',
                 'text-background-color': '#000',

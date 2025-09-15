@@ -230,7 +230,7 @@ export default function LandingPage() {
 
       {/* footer */}
       <footer className="footer">
-        © {new Date().getFullYear()} cloak & dagger. all rights reserved.
+        © {new Date().getFullYear()} seer. all rights reserved.
       </footer>
     </div>
   );

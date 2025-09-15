@@ -1,4 +1,3 @@
-// src/components/CoinCreatorScanner.jsx
 import React, { useMemo, useState } from 'react';
 import axios from 'axios';
 import './CoinCreatorScanner.css';
@@ -55,14 +54,19 @@ function extractCreatedCoinType(ev) {
 }
 
 /* ---------- component ---------- */
-export default function CoinCreatorScanner({ addresses, rpcUrl = DEFAULT_SUI_RPC, onDone }) {
+export default function CoinCreatorScanner({
+  addresses,
+  rpcUrl = DEFAULT_SUI_RPC,
+  onDone,
+  onFocusAddress, // (addrLower) => void
+}) {
   const [status, setStatus] = useState('idle'); // idle | scanning | done
   const [progress, setProgress] = useState(0);
 
   // live results for the inline panel
   const [foundCreators, setFoundCreators] = useState({});
   const [foundCoinsBy, setFoundCoinsBy]   = useState({});
-  const [showResults, setShowResults]     = useState(true);
+  const [showResults, setShowResults]     = useState(false); // collapsed by default
   const [expandedRows, setExpandedRows]   = useState({});
 
   // distinct, lowercased addresses
@@ -81,7 +85,7 @@ export default function CoinCreatorScanner({ addresses, rpcUrl = DEFAULT_SUI_RPC
         jsonrpc: '2.0',
         method: 'suix_queryEvents',
         params: [
-          { Sender: addrLower }, // robust filter; post-filter locally
+          { Sender: addrLower },
           cursor,
           50,
           true
@@ -99,7 +103,7 @@ export default function CoinCreatorScanner({ addresses, rpcUrl = DEFAULT_SUI_RPC
           if (coinType) {
             coins.push({
               coinType,
-              symbol: symbolFromCoinType(coinType),
+              symbol: symbolFromCoinType(coinType), // takes last :: segment e.g. ODOR
               name: symbolFromCoinType(coinType),
               txDigest: ev?.id?.txDigest,
             });
@@ -176,23 +180,15 @@ export default function CoinCreatorScanner({ addresses, rpcUrl = DEFAULT_SUI_RPC
   const toggleRow = (addrLower) =>
     setExpandedRows(prev => ({ ...prev, [addrLower]: !prev[addrLower] }));
 
-  const clearResults = () => {
-    setFoundCreators({});
-    setFoundCoinsBy({});
-    setExpandedRows({});
-    setStatus('idle');
-    setProgress(0);
-  };
-
   return (
     <div className="creator-scan">
       <button
-        className="apply-btn scan-btn"
+        className="apply-btn scan-btn red"
         disabled={!distinct.length || status === 'scanning'}
         onClick={runScan}
-        title={!distinct.length ? 'no nodes to scan' : 'check all nodes for coin creation events'}
+        title={!distinct.length ? 'no nodes to scan' : 'search all nodes for coin creation events'}
       >
-        check coin creators
+        search for coin creators
       </button>
 
       <div className="scan-status">
@@ -204,22 +200,15 @@ export default function CoinCreatorScanner({ addresses, rpcUrl = DEFAULT_SUI_RPC
           </>
         )}
         {status === 'done' && (
-          <>
-            <span className="checkmark" aria-hidden>✓</span>
-            <span>done &nbsp;·&nbsp; creators: {Object.keys(foundCoinsBy).length}</span>
-          </>
-        )}
-        {(status === 'scanning' || status === 'done') && (
-          <button className="toggle-results" onClick={() => setShowResults(v => !v)}>
-            {showResults ? 'hide results' : 'show results'}
-          </button>
-        )}
-        {(status === 'done' || status === 'idle') && (Object.keys(foundCoinsBy).length > 0) && (
-          <button className="clear-results" onClick={clearResults} title="clear inline results">
-            clear
-          </button>
+          <span className="muted">results ready</span>
         )}
       </div>
+
+      {(status === 'scanning' || status === 'done') && (
+        <button className="toggle-results wide" onClick={() => setShowResults(v => !v)}>
+          {showResults ? 'hide results' : 'show results'}
+        </button>
+      )}
 
       {showResults && (status === 'scanning' || status === 'done') && (
         <div className="scan-results" role="region" aria-label="coin creator scan results">
@@ -249,8 +238,26 @@ export default function CoinCreatorScanner({ addresses, rpcUrl = DEFAULT_SUI_RPC
                           key={`${addrLower}-${c.coinType}-${idx}`}
                           title={c.coinType}
                         >
+                          {/* name pill from last :: segment (e.g., ODOR) */}
                           <span className="pill">{c.symbol || 'coin'}</span>
-                          <span className="ctype">{c.coinType}</span>
+
+                          {/* click full type to highlight creator */}
+                          <button
+                            className="ctype"
+                            onClick={() => onFocusAddress && onFocusAddress(addrLower)}
+                            title="click to highlight this creator on the graph"
+                          >
+                            {c.coinType}
+                          </button>
+
+                          {/* copy coin type silently */}
+                          <button
+                            className="copy"
+                            onClick={async () => { try { await navigator.clipboard.writeText(c.coinType); } catch {} }}
+                            title="copy coin type"
+                          >
+                            copy
+                          </button>
                         </div>
                       ))}
                       {coins.length > shown.length && (
